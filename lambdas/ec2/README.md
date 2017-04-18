@@ -1,6 +1,6 @@
 # AWS EC2 Reaper 
 
-This AWS EC2 Reaper works using tags set on the instance itself. The Reaper is composed of two AWS Lambdas: the "Schema Enforcer" and the "Terminator". The Schema Enforcer ensures that all instances have a valid `termination_date` tag set when the EC2 resource is created, and the Terminator runs periodically to delete all instances past their `termination_date`.
+This AWS EC2 Reaper works using tags set on the instance itself. The Reaper is composed of two AWS Lambdas: the "Schema Enforcer" and the "Terminator". The Schema Enforcer ensures that all new instances have a valid `termination_date` tag set when the EC2 resource is created, and the Terminator runs periodically to delete all instances past their `termination_date`.
 
 ## Rules and Usage
 
@@ -28,6 +28,8 @@ Currently, there is no build script yet for the Reaper; you will need to copy th
 ```
 
 The Terminator should run on a Cloudwatch schedule, configurable in the AWS EC2 GUI. 
+
+Both Lambdas do not actually delete instances unless they are running in an environment where the `LIVE_MODE` environment variable is defined. To turn these Lambdas on and allow them to actually terminate instances, they must run in an environment where `LIVE_MODE` is defined. Please note that defining `LIVE_MODE` to `False` does not turn off the Lambdas; the environment variable must be removed entirely to turn the Reaper back to a non-destructive mode.
 
 ## Components
 
