@@ -1,6 +1,5 @@
 from __future__ import print_function
 
-import json
 import boto3
 import datetime
 import time
@@ -11,10 +10,17 @@ from warnings import warn
 
 ec2 = boto3.resource('ec2')
 
+def determine_live_mode():
+    """
+    Returns True if LIVE_MODE is set to true in the shell environment, False for
+    all other cases.
+    """
+    return re.search(r'(?i)^true$', LIVE_MODE) is not None
+
 # The `LIVE_MODE` environment variable controls if this script is actually
-# running and reaping in your AWS environment. To turn reaping on, supply
-# a value for the `LIVE_MODE` environment variable in your Lambda environment.
-LIVE_MODE = "LIVE_MODE" in os.environ
+# running and reaping in your AWS environment. To turn reaping on, set 
+# the `LIVE_MODE` environment variable to true in your Lambda environment.
+LIVE_MODE = determine_live_mode()
 
 # The `MINUTES_TO_WAIT` global variable is the number of minutes to wait for
 # a termination_date tag to appear for the EC2 instance. Please note that the
@@ -109,7 +115,7 @@ def terminate_and_raise_message(ec2_instance, message, exception=None, live_mode
     if exception is None:
         raise Exception(message)
     else:
-        Warning(message)
+        warn(message)
         raise
 
 def validate_ec2_termination_date(ec2_instance):
@@ -169,7 +175,16 @@ def calculate_lifetime_delta(lifetime_value):
         raise ValueError("Unable to parse the unit '{0}'".format(unit))
 
 
-def lambda_handler(event, context):
+# This is the function that the schema_enforcer lambda should run when an instance hits
+# the pending state.
+def enforce(event, context):
+    """
+    :param event: AWS CloudWatch event; should be a configured for when the state is pending.
+    :param context: Object to determine runtime info of the Lambda function.
+
+    See http://docs.aws.amazon.com/lambda/latest/dg/python-context-object.html for more info
+    on context.
+    """
     print(event)
     print(event['detail']['instance-id'])
     instance = ec2.Instance(id=event['detail']['instance-id'])
@@ -177,6 +192,8 @@ def lambda_handler(event, context):
         wait_for_tags(instance, MINUTES_TO_WAIT)
         validate_ec2_termination_date(instance)
     except Exception as e:
+        # Here we should catch all exceptions, report on the state of the instance, and then
+        # bubble up the original exception.
         instance.load()
 
         if instance.state['Name'] == 'terminated':
@@ -196,3 +213,49 @@ def lambda_handler(event, context):
         raise
 
     print('Schema successfully enforced.')
+
+# This is the function that a terminator lambda should call periodically to delete instances past their
+# termination_date.
+def terminate(event, context):
+    """
+    :param event: AWS CloudWatch event; should be a Cloudwatch Scheduled Event.
+    :param context: Object to determine runtime info of the Lambda function.
+
+    See http://docs.aws.amazon.com/lambda/latest/dg/python-context-object.html for more info
+    on context.
+    """
+    improperly_tagged = []
+    deleted_instances = []
+
+    instances = ec2.instances.filter(
+        Filters=[{'Name': 'instance-state-name', 'Values': ['running']}])
+    for instance in instances:
+        if get_tag(instance, 'termination_date') is None:
+            print("No termination date found for {0}".format(instance.id))
+            improperly_tagged.append(instance)
+            continue
+        ec2_termination_date = get_tag(instance, 'termination_date')
+        try:
+            dateutil.parser.parse(ec2_termination_date) - timenow_with_utc()
+        except Exception as e:
+            print("Unable to parse the termination_date for {0}".format(instance.id))
+            improperly_tagged.append(instance)
+            continue
+
+        if dateutil.parser.parse(ec2_termination_date) > timenow_with_utc():
+            ttl = dateutil.parser.parse(ec2_termination_date) - timenow_with_utc()
+            print("EC2 instance will be terminated {0} seconds from now, roughly".format(ttl.seconds))
+        else:
+            if LIVE_MODE:
+                instance.terminate()
+                print("Termination Date passed; deleting EC2 instance {0}".format(instance.id))
+            else:
+                print('LIVE_MODE off, would have deleted EC2 instance {0}'.format(instance.id))
+            deleted_instances.append(instance)
+
+    if LIVE_MODE:
+        print("The following instances have been deleted:\n{0}".format(deleted_instances))
+    else:
+        print("LIVE_MODE is off, would have deleted the following instances:\n{0}".format(deleted_instances))
+    if improperly_tagged:
+        raise ValueError("Instances found with unparsable termination_date tags:\n{0}".format(improperly_tagged))
