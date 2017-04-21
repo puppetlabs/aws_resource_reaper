@@ -56,9 +56,11 @@ def wait_for_tags(ec2_instance, wait_time):
     :param ec2_instance: a boto3 resource representing an Amazon EC2 Instance
     :param wait_time: The number of minutes to wait for the 'termination_date'
 
-    This method exits when either a termination date is found or the wait_time
-    has passed. The method looks for the 'lifetime' key, parses it, and sets
-    the 'termination_date' on the instance.
+    This method returns when a 'termination_date' is found and raises an exception
+    and terminates the instance when the wait_time has passed. The method looks
+    for the 'lifetime' key, parses it, and sets the 'termination_date' on the
+    instance. The 'termination_date' can be set directly on the instance, bypassing
+    the steps to parse the lifetime key and allowing this to return.
     """
     start = timenow_with_utc()
     timeout = start + datetime.timedelta(minutes=wait_time)
@@ -67,7 +69,7 @@ def wait_for_tags(ec2_instance, wait_time):
         ec2_instance.load()
         if get_tag(ec2_instance, 'termination_date'):
             print("'termination_date' tag found!")
-            break
+            return
         if get_tag(ec2_instance, 'lifetime') is None:
             print("No 'lifetime' tag found; sleeping for 15s")
             time.sleep(15)
@@ -91,9 +93,11 @@ def wait_for_tags(ec2_instance, wait_time):
                     }
                 ]
             )
-    else:
-        terminate_and_raise_message(ec2_instance,
-                                    'No termination_date found within {0} minutes of creation'.format(wait_time))
+
+    # If the above while condition does not return after finding a termination_date,
+    # terminate the instance and raise an exception.
+    terminate_and_raise_message(ec2_instance,
+                                'No termination_date found within {0} minutes of creation'.format(wait_time))
 
 
 def terminate_and_raise_message(ec2_instance, message, exception=None, live_mode=LIVE_MODE):
