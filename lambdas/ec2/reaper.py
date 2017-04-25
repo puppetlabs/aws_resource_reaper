@@ -15,7 +15,10 @@ def determine_live_mode():
     Returns True if LIVE_MODE is set to true in the shell environment, False for
     all other cases.
     """
-    return re.search(r'(?i)^true$', LIVE_MODE) is not None
+    if 'LIVE_MODE' in os.environ:
+        return re.search(r'(?i)^true$', os.environ['LIVE_MODE']) is not None
+    else:
+        return False
 
 # The `LIVE_MODE` environment variable controls if this script is actually
 # running and reaping in your AWS environment. To turn reaping on, set 
