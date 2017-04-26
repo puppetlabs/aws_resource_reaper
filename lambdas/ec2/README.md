@@ -8,7 +8,7 @@ termination date.
 
 ## Rules and Usage
 
-**TL;DR** Tag your instance with `lifetime` tag on creation.  A valid `lifetime` 
+**TL;DR** Tag an instance with a `lifetime` tag on creation.  A valid `lifetime` 
 tag is a string of an integer value with a 1 letter unit of w(weeks), d(days), 
 h(hours). For example, `1w` is 1 week, `2d` is 2 days, and `3h` is 3 hours. 
 
@@ -38,10 +38,11 @@ EC2 Reaper.
 Currently, there is no build script yet for the Reaper; you will need to copy 
 the `reaper.py` file to both AWS Lambdas. The Schema Enforcer AWS Lambda 
 should call the `enforce` method from the `reaper.py` file, and the Terminator 
-AWS Lambda should call the `terminate` method. You will also need to ensure that 
-there is a role for the AWS Lambda with sufficient privilege and access to read 
-events and delete instances. Once those are in place, you will need to add a 
-rule in Cloudwatch for the Schema Enforcer with this event pattern:
+AWS Lambda should call the `terminate_expired_instances` method. You will also
+need to ensure that there is a role for the AWS Lambda with sufficient privilege
+and access to read events and delete instances. Once those are in place, you 
+will need to add a rule in Cloudwatch for the Schema Enforcer with this event 
+pattern:
 
 ```json
 {
@@ -76,19 +77,17 @@ have a valid `termination_date` tag associated with it. This AWS Lambda also
 listens for a `lifetime` tag; if found, it calculates a new future date and adds 
 that date as the `termination_date` for the instance.
 
-The Schema Enforcer terminates instances that do no have valid 
-`termination_date` tags after 4 minutes, and reports that termination as an 
-exception raised. If the Schema Enforcer encounters a handled error during 
-executuion, it terminates the instance and raises an error. Unhandled errors are
-raised, but the Schema Enforcer does not terminate the instance in these cases.
-The Schema Enforcer does not terminate instances after the schema has been 
-enforced; the Terminator is responsible for that.
+The Schema Enforcer terminates instances that do not have valid tags, or if the 
+timeout period MINUTES_TO_WAIT has elapsed. Unhandled errors are raised, but the 
+Schema Enforcer does not terminate the instance in these cases. The Schema 
+Enforcer does not terminate instances after the schema has been enforced; the 
+Terminator is responsible for that.
 
 #### Terminator
 The Terminator is a simple AWS Lambda that looks for a `termination_date` tag on
 an instance and terminates it if it is past its `termination_date`. If the 
-`termination_date` is missing or malformed, the script reports those instances 
-in an exception. This AWS Lambda is designed to be run periodically; depending on 
+`termination_date` is missing or malformed, the script logs those instances in its
+output. This AWS Lambda is designed to be run periodically; depending on 
 your needs, every 15 minutes should be more than sufficient. The Terminator does
 not ensure that EC2 instances have valid tags; the Schema Enforcer is responsible 
 for that.
