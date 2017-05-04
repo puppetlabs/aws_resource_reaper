@@ -120,13 +120,14 @@ def terminate_instance(ec2_instance, message):
     else:
         print("REAPER TERMINATION not enabled: LIVE_MODE is {0}. Would have deleted instance {1}".format(LIVE_MODE, ec2_instance.id))
 
-def validate_ec2_termination_date(termination_date):
+def validate_ec2_termination_date(ec2_instance):
     """
     :param ec2_instance: a boto3 resource representing an Amazon EC2 Instance.
 
     Validates that an ec2 instance has a valid termination_date in the future.
+    Otherwise, delete the instance.
     """
-          
+    termination_date = get_tag(ec2_instance, 'termination_date')
     try:
         dateutil.parser.parse(termination_date) - timenow_with_utc()
     except Exception as e:
@@ -190,7 +191,7 @@ def enforce(event, context):
     try:
         termination_date = wait_for_tags(instance, MINUTES_TO_WAIT)
         if termination_date:
-            validate_ec2_termination_date(termination_date)
+            validate_ec2_termination_date(instance)
     except Exception as e:
         # Here we should catch all exceptions, report on the state of the instance, and then
         # bubble up the original exception.
