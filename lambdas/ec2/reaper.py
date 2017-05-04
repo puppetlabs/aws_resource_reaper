@@ -113,12 +113,14 @@ def terminate_instance(ec2_instance, message):
     Prints a message and terminates an instance if LIVE_MODE is True. Otherwise, print out
     the instance id of EC2 resource that would have been deleted.
     """
-    print("REAPER TERMINATION message: {0}".format(message))
+    output = "REAPER TERMINATION message(ec2_instance_id={0}): {1}\n".format(ec2_instance.id,message)
     if LIVE_MODE:
-        print("REAPER TERMINATION enabled: deleting instance {0}".format(ec2_instance.id))
+        output += 'REAPER TERMINATION enabled: deleting instance {0}'.format(ec2_instance.id)
+        print(output)
         ec2_instance.terminate()
     else:
-        print("REAPER TERMINATION not enabled: LIVE_MODE is {0}. Would have deleted instance {1}".format(LIVE_MODE, ec2_instance.id))
+        output += "REAPER TERMINATION not enabled: LIVE_MODE is {0}. Would have deleted instance {1}".format(LIVE_MODE, ec2_instance.id)
+        print(output)
 
 def validate_ec2_termination_date(ec2_instance):
     """
