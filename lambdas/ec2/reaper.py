@@ -243,8 +243,8 @@ def terminate_expired_instances(event, context):
             deleted_instances.append(instance)
 
     if LIVE_MODE:
-        print("REAPER TERMINATION completed. The following instances have been deleted:\n{0}".format(deleted_instances))
+        print("REAPER TERMINATION completed. The following instances have been deleted: {0}".format(deleted_instances))
     else:
-        print("REAPER TERMINATION completed. LIVE_MODE is off, would have deleted the following instances:\n{0}".format(deleted_instances))
+        print("REAPER TERMINATION completed. LIVE_MODE is off, would have deleted the following instances: {0}".format(deleted_instances))
     if improperly_tagged:
-        print("REAPER TERMINATION completed. Found unparsable termination_date tags:\n{0}".format(improperly_tagged))
+        print("REAPER TERMINATION completed but bad tags found. Found unparsable or missing termination_date tags for: {0}".format(improperly_tagged))
