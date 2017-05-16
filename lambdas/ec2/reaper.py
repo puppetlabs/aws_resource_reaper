@@ -127,23 +127,21 @@ def validate_ec2_termination_date(ec2_instance):
     :param ec2_instance: a boto3 resource representing an Amazon EC2 Instance.
 
     Validates that an ec2 instance has a valid termination_date in the future.
-    Otherwise, delete the instance.
+    Set the utc offset if not defined. Otherwise, delete the instance.
     """
     termination_date = get_tag(ec2_instance, 'termination_date')
     try:
-        dateutil.parser.parse(termination_date) - timenow_with_utc()
+        parsed_date = dateutil.parser.parse(termination_date)
     except Exception as e:
-        if e is TypeError:
-            if re.search(r'(offset-naive).+(offset-aware)', e.__str__):
-                terminate_instance(ec2_instance,
-                                   'The termination_date requires a UTC offset')
-            else:
-                terminate_instance(ec2_instance,
-                                   'Unable to parse the termination_date')
-            return
+        terminate_instance(ec2_instance,
+                           'Unable to parse the termination_date: {0}'.format(termination_date))
+        return
 
-    if dateutil.parser.parse(termination_date) > timenow_with_utc():
-        ttl = dateutil.parser.parse(termination_date) - timenow_with_utc()
+    if parsed_date.utcoffset() is None:
+        parsed_date = parsed_date.replace(tzinfo=dateutil.tz.tz.tzutc())
+
+    if parsed_date > timenow_with_utc():
+        ttl = parsed_date - timenow_with_utc()
         print("EC2 instance will be terminated {0} seconds from now, roughly".format(ttl.seconds))
     else:
         terminate_instance(ec2_instance,
