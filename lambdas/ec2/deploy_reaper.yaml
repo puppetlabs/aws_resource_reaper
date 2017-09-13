@@ -1,0 +1,189 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Parameters:
+  TerminatorRate:
+    Type: String
+    Default: rate(1 hour)
+    Description: The rate at which to check for expired instances
+
+  HIPCHATTOKEN:
+    Type: String
+    Description: Token to use when posting notifications to Hipchat
+
+  HIPCHATROOMID:
+    Type: String
+    Description: Which Hipchat room to post to
+
+  LIVEMODE:
+    Type: String
+    Default: "False"
+    Description: Toggle for if the reaper actually deletes ec2 instances.
+
+  S3BucketPrefix:
+    Type: String
+    Default: ec2-reaper
+    Description: Prefix for the S3 Bucket with resources created by the deploy_to_s3 job.
+
+Resources:
+  ReaperRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: "Allow"
+            Principal:
+              Service:
+                - 'lambda.amazonaws.com'
+            Action:
+                - "sts:AssumeRole"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEC2FullAccess
+        - arn:aws:iam::aws:policy/AWSLambdaFullAccess
+        - arn:aws:iam::aws:policy/IAMReadOnlyAccess
+        - arn:aws:iam::aws:policy/CloudWatchActionsEC2Access
+
+  LambdaTerminator:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        S3Key: reaper.zip
+        S3Bucket: !Sub "${S3BucketPrefix}-${AWS::Region}"
+      Handler: reaper.terminate_expired_instances
+      Environment:
+        Variables:
+          LIVEMODE: !Ref LIVEMODE
+      Timeout: 300
+      Runtime: python2.7
+      Role: !GetAtt ReaperRole.Arn 
+    DependsOn: ReaperRole
+
+  LambdaTerminatorRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Rule for Terminator Lambda
+      ScheduleExpression: !Ref TerminatorRate
+      State: ENABLED
+      Targets: 
+        -
+          Arn: !GetAtt LambdaTerminator.Arn
+          Id: !Ref LambdaTerminator
+
+  LambdaTerminatorPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref LambdaTerminator
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt LambdaTerminatorRule.Arn
+
+  LambdaSchemaEnforcer:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        S3Key: reaper.zip
+        S3Bucket: !Sub "${S3BucketPrefix}-${AWS::Region}"
+      Handler: reaper.enforce
+      Environment:
+        Variables:
+          LIVEMODE: !Ref LIVEMODE
+      Timeout: 300
+      Runtime: python2.7
+      Role: !GetAtt ReaperRole.Arn 
+    DependsOn: ReaperRole
+
+  LambdaSchemaEnforcerRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Rule for enforcer lambda
+      EventPattern:
+        source:
+          - aws.ec2
+        detail-type:
+          - EC2 Instance State-change Notification
+        detail:
+          state:
+            - pending
+      State: ENABLED
+      Targets: 
+        -
+          Arn: !GetAtt LambdaSchemaEnforcer.Arn
+          Id: !Ref LambdaSchemaEnforcer
+
+  LambdaSchemaEnforcerPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref LambdaSchemaEnforcer
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt LambdaSchemaEnforcerRule.Arn
+
+  LambdaTerminatorLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${LambdaTerminator}"
+      RetentionInDays: 7
+
+  LambdaSchemaEnforcerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${LambdaSchemaEnforcer}"
+      RetentionInDays: 7
+
+  LambdaHipchatNotifierLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${LambdaHipchatNotifier}"
+      RetentionInDays: 7
+
+  LambdaHipchatNotifier:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        S3Key: hipchat_notifier.zip
+        S3Bucket: !Sub "${S3BucketPrefix}-${AWS::Region}"
+      Handler: hipchat_notifier.post
+      Timeout: 300
+      Runtime: python2.7
+      Role: !GetAtt ReaperRole.Arn 
+      Environment:
+        Variables:
+          HIPCHATTOKEN: !Ref HIPCHATTOKEN
+          HIPCHATROOMID: !Ref HIPCHATROOMID
+    DependsOn: ReaperRole
+
+  SchemaEnforcerHipchatNotifierSubscription:
+    Type: AWS::Logs::SubscriptionFilter
+    Properties:
+      DestinationArn: !GetAtt LambdaHipchatNotifier.Arn
+      FilterPattern: REAPER TERMINATION
+      LogGroupName: !Ref LambdaSchemaEnforcerLogGroup
+    DependsOn: SchemaEnforcerHipchatNotifierPermission
+
+  TerminatorHipchatNotifierSubscription:
+    Type: AWS::Logs::SubscriptionFilter
+    Properties:
+      DestinationArn: !GetAtt LambdaHipchatNotifier.Arn
+      FilterPattern: REAPER TERMINATION
+      LogGroupName: !Ref LambdaTerminatorLogGroup
+    DependsOn: TerminatorHipchatNotifierPermission
+
+  TerminatorHipchatNotifierPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref LambdaHipchatNotifier
+      Principal: !Sub "logs.${AWS::Region}.amazonaws.com"
+      SourceArn: !Sub
+        - ${LogGroupArn}
+        - { LogGroupArn: !GetAtt LambdaTerminatorLogGroup.Arn }
+
+  SchemaEnforcerHipchatNotifierPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref LambdaHipchatNotifier
+      Principal: !Sub "logs.${AWS::Region}.amazonaws.com"
+      SourceArn: !Sub
+        - ${LogGroupArn}
+        - { LogGroupArn: !GetAtt LambdaSchemaEnforcerLogGroup.Arn }

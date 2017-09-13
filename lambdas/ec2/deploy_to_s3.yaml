@@ -1,0 +1,156 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+
+Parameters:
+  OriginalS3Bucket:
+    Type: String
+    Default: reaperfiles
+    Description: Original bucket that the reaper script resides in.
+
+  OriginalReaperZip:
+    Type: String
+    Default: reaper.zip
+    Description: Key for the reaper.zip file in the S3 bucket.
+
+  OriginalHipchatNotifierZip:
+    Type: String
+    Default: hipchat_notifier.zip
+    Description: Key for the reaper.zip file in the S3 bucket.
+
+  S3BucketPrefix:
+    Type: String
+    Default: ec2-reaper
+    Description: Prefix for the S3 Bucket Name in each region.
+
+Resources:
+  S3CopierRole:
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          -
+            Action:
+              - "sts:AssumeRole"
+            Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+        Version: "2012-10-17"
+      Path: /
+      Policies:
+        -
+          PolicyDocument:
+            Statement:
+              -
+                Action:
+                  - "logs:CreateLogGroup"
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                Effect: Allow
+                Resource: "arn:aws:logs:*:*:*"
+              -
+                Action:
+                  - "s3:*"
+                Effect: Allow
+                Resource: "*"
+            Version: "2012-10-17"
+          PolicyName: root
+    Type: "AWS::IAM::Role"
+
+  S3Bucket:
+    Type: "AWS::S3::Bucket"
+    Properties:
+      BucketName: !Sub "${S3BucketPrefix}-${AWS::Region}"
+      AccessControl: PublicRead
+      
+  S3CopierLambda:
+    Properties:
+      Timeout: 180
+      Code:
+        ZipFile:
+          !Sub |
+            import boto3
+            import json
+            import sys
+            import traceback
+
+            try:
+                from urllib2 import HTTPError, build_opener, HTTPHandler, Request
+            except ImportError:
+                from urllib.error import HTTPError
+                from urllib.request import build_opener, HTTPHandler, Request
+
+            SUCCESS = "SUCCESS"
+            FAILED = "FAILED"
+            s3 = boto3.resource('s3')
+            def handler(event, context):
+                print event
+                try:
+                    if event['RequestType'] == 'Delete':
+                        print('Deletion request received')
+                        bucket = s3.Bucket(event['ResourceProperties']['NewBucket'])
+                        bucket.objects.all().delete()
+                        send(event, context, SUCCESS)
+                        return
+                    copy_source = {'Bucket': event['ResourceProperties']['OrigBucketName'],
+                        'Key': event['ResourceProperties']['OrigReaperKey']}
+                    s3.meta.client.copy(copy_source, 
+                        event['ResourceProperties']['NewBucket'],
+                        event['ResourceProperties']['OrigReaperKey'])
+                    s3.ObjectAcl(event['ResourceProperties']['NewBucket'],
+                        event['ResourceProperties']['OrigReaperKey']).put(ACL='public-read')
+                    hc_notifier_copy_source = {'Bucket': event['ResourceProperties']['OrigBucketName'],
+                        'Key': event['ResourceProperties']['OrigHipchatNotifierKey']}
+                    s3.meta.client.copy(hc_notifier_copy_source, 
+                        event['ResourceProperties']['NewBucket'],
+                        event['ResourceProperties']['OrigHipchatNotifierKey'])
+                    s3.ObjectAcl(event['ResourceProperties']['NewBucket'],
+                        event['ResourceProperties']['OrigHipchatNotifierKey']).put(ACL='public-read')
+                except Exception as e:
+                    print('Error copying S3 data')
+                    exc_type, exc_value, exc_traceback = sys.exc_info()
+                    traceback.print_exception(exc_type, exc_value, exc_traceback,
+                                              limit=2, file=sys.stdout)
+                    send(event, context, FAILED)
+                send(event, context, SUCCESS)
+
+            def send(event, context, response_status, reason=None, response_data=None, physical_resource_id=None):
+                response_data = response_data or {}
+                response_body = json.dumps(
+                    {
+                        'Status': response_status,
+                        'Reason': reason or "See the details in CloudWatch Log Stream: " + context.log_stream_name,
+                        'PhysicalResourceId': physical_resource_id or context.log_stream_name,
+                        'StackId': event['StackId'],
+                        'RequestId': event['RequestId'],
+                        'LogicalResourceId': event['LogicalResourceId'],
+                        'Data': response_data
+                    }
+                )
+
+                opener = build_opener(HTTPHandler)
+                request = Request(event['ResponseURL'], data=response_body)
+                request.add_header('Content-Type', '')
+                request.add_header('Content-Length', len(response_body))
+                request.get_method = lambda: 'PUT'
+                try:
+                    response = opener.open(request)
+                    print("Status code: {}".format(response.getcode()))
+                    print("Status message: {}".format(response.msg))
+                    return True
+                except HTTPError as exc:
+                    print("Failed executing HTTP request: {}".format(exc.code))
+                    return False 
+      Handler: index.handler
+      Role: !GetAtt S3CopierRole.Arn
+      Runtime: python2.7
+    Type: "AWS::Lambda::Function"
+
+  S3CopierLambdaTrigger:
+    Type: Custom::LambdaTrigger
+    Properties:
+      ServiceToken: !GetAtt S3CopierLambda.Arn
+      OrigBucketName: !Ref OriginalS3Bucket
+      OrigReaperKey: !Ref OriginalReaperZip
+      OrigHipchatNotifierKey: !Ref OriginalHipchatNotifierZip
+      NewBucket: !Ref S3Bucket
+
