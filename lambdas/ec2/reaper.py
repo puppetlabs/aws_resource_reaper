@@ -12,18 +12,18 @@ ec2 = boto3.resource('ec2')
 
 def determine_live_mode():
     """
-    Returns True if LIVE_MODE is set to true in the shell environment, False for
+    Returns True if LIVEMODE is set to true in the shell environment, False for
     all other cases.
     """
-    if 'LIVE_MODE' in os.environ:
-        return re.search(r'(?i)^true$', os.environ['LIVE_MODE']) is not None
+    if 'LIVEMODE' in os.environ:
+        return re.search(r'(?i)^true$', os.environ['LIVEMODE']) is not None
     else:
         return False
 
-# The `LIVE_MODE` environment variable controls if this script is actually
-# running and reaping in your AWS environment. To turn reaping on, set 
-# the `LIVE_MODE` environment variable to true in your Lambda environment.
-LIVE_MODE = determine_live_mode()
+# The `LIVEMODE` environment variable controls if this script is actually
+# running and reaping in your AWS environment. To turn reaping on, set
+# the `LIVEMODE` environment variable to true in your Lambda environment.
+LIVEMODE = determine_live_mode()
 
 # The `MINUTES_TO_WAIT` global variable is the number of minutes to wait for
 # a termination_date tag to appear for the EC2 instance. Please note that the
@@ -110,16 +110,16 @@ def terminate_instance(ec2_instance, message):
     :param ec2_instance: a boto3 resource representing an Amazon EC2 Instance.
     :param message: string explaining why the instance is being terminated.
 
-    Prints a message and terminates an instance if LIVE_MODE is True. Otherwise, print out
+    Prints a message and terminates an instance if LIVEMODE is True. Otherwise, print out
     the instance id of EC2 resource that would have been deleted.
     """
     output = "REAPER TERMINATION message(ec2_instance_id={0}): {1}\n".format(ec2_instance.id,message)
-    if LIVE_MODE:
+    if LIVEMODE:
         output += 'REAPER TERMINATION enabled: deleting instance {0}'.format(ec2_instance.id)
         print(output)
         ec2_instance.terminate()
     else:
-        output += "REAPER TERMINATION not enabled: LIVE_MODE is {0}. Would have deleted instance {1}".format(LIVE_MODE, ec2_instance.id)
+        output += "REAPER TERMINATION not enabled: LIVEMODE is {0}. Would have deleted instance {1}".format(LIVEMODE, ec2_instance.id)
         print(output)
 
 def validate_ec2_termination_date(ec2_instance):
@@ -242,9 +242,9 @@ def terminate_expired_instances(event, context):
             terminate_instance(instance, "EC2 instance is expired")
             deleted_instances.append(instance)
 
-    if LIVE_MODE:
+    if LIVEMODE:
         print("REAPER TERMINATION completed. The following instances have been deleted: {0}".format(deleted_instances))
     else:
-        print("REAPER TERMINATION completed. LIVE_MODE is off, would have deleted the following instances: {0}".format(deleted_instances))
+        print("REAPER TERMINATION completed. LIVEMODE is off, would have deleted the following instances: {0}".format(deleted_instances))
     if improperly_tagged:
         print("REAPER TERMINATION completed but bad tags found. Found unparsable or missing termination_date tags for: {0}".format(improperly_tagged))

@@ -31,42 +31,89 @@ lifetime extended beyond its original future terminatation date, the
 `termination_date` tag should be updated directly.
  
 ## Implementation and Details
-The following sections are details meant for people implementing the the AWS
+The following sections are details meant for people implementing the AWS
 EC2 Reaper.
 
 ### Installation
-Currently, there is no build script yet for the Reaper; you will need to copy 
-the `reaper.py` file to both AWS Lambdas. The Schema Enforcer AWS Lambda 
-should call the `enforce` method from the `reaper.py` file, and the Terminator 
-AWS Lambda should call the `terminate_expired_instances` method. You will also
-need to ensure that there is a role for the AWS Lambda with sufficient privilege
-and access to read events and delete instances. Once those are in place, you 
-will need to add a rule in Cloudwatch for the Schema Enforcer with this event 
-pattern:
 
-```json
-{
-  "source": [
-    "aws.ec2"
-  ],
-  "detail-type": [
-    "EC2 Instance State-change Notification"
-  ],
-  "detail": {
-    "state": [
-      "pending"
-    ]
-  }
-}
+Installation of the reaper is accomplished by using cloudformation templates found
+in the cloudformation folder. These templates are designed to be used with stacksets
+to deploy the reaper across several accounts.
+
+#### Prequisites
+
+The directions from AWS [here](http://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/stacksets-prereqs.html)
+should be completed before use of the Cloudformation template. One thing to note is
+that the *administrative account* needs the administrative role as well as the
+execution role. This ensures that deploying the `deploy_to_s3.yaml` can create the
+necessary S3 buckets in each region in the administrative account for the Reaper 
+Lambdas to read from.
+
+#### deploy_to_s3 Cloudformation template
+
+This template places the lambda zip resources in S3 buckets in every region so that
+the `deploy_reaper` template can read them for Reaper deployment. In order to use
+this template, you must first manually create an S3 bucket that contains the
+resources to copy across all regions. You will need to do this once per region;
+S3 resources can be read between accounts but not between regions for AWS Lambda.
+
+1. Manually create an S3 bucket accessible from the administrative account. Zip up the
+two python reaper files, `reaper.py` and `hipchat_notifier.py` and place them in the 
+bucket, naming them `reaper.zip` and `hipchat_notifier.zip`. 
+
+2. From the administrative account, create a new stack set and use the `deploy_to_s3`
+template. An example Cloudwatch CLI invocation would look like:
+
+```
+aws cloudformation create-stack-set --stack-set-name reaper-assets --template-body 
+file://path/to/deploy_to_s3.yaml --capabilities CAPABILITY_IAM --parameters
+ParameterKey=OriginalS3Bucket,ParameterValue=MyBucketOfThings
 ```
 
-The Terminator should run on a Cloudwatch schedule, configurable in the [AWS EC2
-GUI](http://docs.aws.amazon.com/AmazonCloudWatch/latest/events/ScheduledEvents.html). 
+3. Deploy stack-set-instances for this stack set, one per region in the administrative
+account. Check the Amazon documentation for the most up-to-date region list.
 
-To turn these AWS Lambdas on and allow them to actually terminate instances, 
-they must run in an environment where `LIVE_MODE` is defined as true. All other
-values, including undefined, result in `LIVE_MODE` evaluating to false and
-no actual termination of EC2 instances.
+```
+aws cloudformation create-stack-instance --stack-set-name --accounts 123456789012
+--regions us-west-1,us-west-2,eu-west-1 --capabilities CAPABILITY_IAM
+```
+
+#### deploy_reaper Cloudformation template
+
+After the resources for the reaper have been distributed, you can use the `deploy_reaper`
+Cloudformation template to deploy the reaper into an account. In order to deploy the
+reaper, you must supply `HIPCHATTOKEN` and `HIPCHATROOMID` parameter values for the
+`hipchat_notifier` Lambda to communicate to the Hipchat room. You should also supply the
+`S3BucketPrefix` you used from the `deploy_to_s3` Cloudformation template.
+
+1. First, create a stack set representing the account you wish to run the reaper in.
+
+```
+aws cloudformation create-stack-set --stack-set-name reaper-aws-account --template-body
+file://path/to/deploy_reaper.yaml --capabilities CAPABILITY_IAM --parameters
+ParameterKey=HIPCHATROOMID,ParameterValue=1234567 ...
+```
+
+2. Deploy the reaper into the account.
+
+```
+aws cloudformation create-stack-instances --stack-set-name reaper-aws-account --accounts
+098765432109 --regions us-west-1,us-west-2,eu-west-1 --capabilities CAPABILITY_IAM
+```
+
+### Turning the Reaper On
+
+Don't fear the Reaper is turned on after the stack instances are created; they will not
+reap anything unless the environment variable `LIVE_MODE` is set to `true`. It will
+only report what it would have done to Hipchat. 
+
+When the time comes to activate the Reaper, update the parameter value `LIVEMODE` to
+"TRUE"(the regex is case-insensitive). 
+
+```
+aws cloudformation update-stack-set --stack-set-name reaper-aws-account
+--use-previous-template --parameters ParameterKey=LIVEMODE,ParameterValue=TRUE
+```
 
 ### Components
 

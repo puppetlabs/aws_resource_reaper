@@ -27,13 +27,20 @@ def read_token():
     """
     Read in the environment HIPCHAT_TOKEN.
     """
-    return os.environ['HIPCHAT_TOKEN']
+    return os.environ['HIPCHATTOKEN']
 
 def read_room_id():
     """
     Read in the environment HIPCHAT_ROOM_ID.
     """
-    return int(os.environ['HIPCHAT_ROOM_ID'])
+    return int(os.environ['HIPCHATROOMID'])
+
+def determine_region():
+    """
+    Determine the current region execution
+    """
+    region = boto3.session.Session().region_name
+    return region
 
 def process_subscription_notification(event):
     """
@@ -82,7 +89,7 @@ def post(event, context):
     url = 'https://api.hipchat.com/v2/room/%d/notification' % ROOMID
 
     event_processed = process_subscription_notification(event)
-    
+
     for log_event in event_processed['logEvents']:
 
         message = log_event['message']
@@ -94,7 +101,7 @@ def post(event, context):
             'color': determine_hipchat_color(event_processed, message),
             'message_format': 'html',
             'notify': False,
-            'from': get_account_alias()})
+            'from': get_account_alias() + " " + determine_region()})
         request = Request(url, headers=headers, data=datastr)
         uopen = urlopen(request)
         rawresponse = ''.join(uopen)
