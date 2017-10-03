@@ -29,6 +29,36 @@ determined, the instance is terminated.
 terminated if they are past their `termination_date`. If an instance needs its 
 lifetime extended beyond its original future terminatation date, the 
 `termination_date` tag should be updated directly.
+
+### Example:
+
+Let's say you're using Packer to build an AMI. If you don't tag it properly, the
+Reaper will probably identify it as an untagged rogue instance before it's completed
+and terminate it. To prevent that, make sure you set the `run_tags` key in your build
+JSON file.
+
+``` json
+{
+  "builders": [
+    {
+      "type": "amazon-ebs",
+      "region": "us-west-2",
+      "source_ami": "ami-c7d092f7",
+      "instance_type": "m3.large",
+      "ssh_username": "centos",
+      "ami_name": "Example AMI",
+      "ssh_pty": "true",
+      "run_tags":  {
+        "created_by": "<your email>",
+        "department": "<your dept>",
+        "project": "vm_publish",
+        "lifetime": "1h"
+      }
+    }
+  ],
+  "..."
+}
+```
  
 ## Implementation and Details
 The following sections are details meant for people implementing the AWS
