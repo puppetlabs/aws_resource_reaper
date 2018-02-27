@@ -67,17 +67,21 @@ EC2 Reaper.
 ### Installation
 
 Installation of the reaper is accomplished by using cloudformation templates found
-in the cloudformation folder. These templates are designed to be used with stacksets
+in the reaperfiles S3 folder. These templates are designed to be used with stacksets
 to deploy the reaper across several accounts.
 
 #### Prequisites
 
 The directions from AWS [here](http://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/stacksets-prereqs.html)
-should be completed before use of the Cloudformation template. One thing to note is
-that the *administrative account* needs the administrative role as well as the
+should be completed before use of the Cloudformation template. 
+
+A few things to note:
+1. The *administrative account* needs the administrative role as well as the
 execution role. This ensures that deploying the `deploy_to_s3.yaml` can create the
 necessary S3 buckets in each region in the administrative account for the Reaper 
 Lambdas to read from.
+2. Both roles should be created by deploying cloudformation stacks using the templates in the documentation linked above. You can download the templates by clicking the link in the documentation to the yaml files. You can follow the steps to create a new stack [here](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/cfn-console-create-stack.html)
+3. Make sure to set a stack name that relates to what the stack does (like aws-cf-ar for the aws cloudformation administrator role stack), and use the administrative account ID for the AdministratorAccountID field. 
 
 #### deploy_to_s3 Cloudformation template
 
@@ -86,55 +90,72 @@ the `deploy_reaper` template can read them for Reaper deployment. In order to us
 this template, you must first manually create an S3 bucket that contains the
 resources to copy across all regions. You will need to do this once per region;
 S3 resources can be read between accounts but not between regions for AWS Lambda.
+This only needs to be done one time for the administrative account. If new regions
+are added you can just perform step 3 and list the new region.
 
 1. Manually create an S3 bucket accessible from the administrative account. Zip up the
 two python reaper files, `reaper.py` and `hipchat_notifier.py` and place them in the 
 bucket, naming them `reaper.zip` and `hipchat_notifier.zip`. 
 
 2. From the administrative account, create a new stack set and use the `deploy_to_s3`
-template. An example Cloudwatch CLI invocation would look like:
+template. An example CLI invocation would look like:
 
 ```
 aws cloudformation create-stack-set --stack-set-name reaper-assets --template-body 
 file://path/to/deploy_to_s3.yaml --capabilities CAPABILITY_IAM --parameters
-ParameterKey=OriginalS3Bucket,ParameterValue=MyBucketOfThings
+ParameterKey=OriginalS3Bucket,ParameterValue=reaperfiles
 ```
 
 3. Deploy stack-set-instances for this stack set, one per region in the administrative
 account. Check the Amazon documentation for the most up-to-date region list.
 
 ```
-aws cloudformation create-stack-instance --stack-set-name --accounts 123456789012
---regions us-west-1,us-west-2,eu-west-1 --capabilities CAPABILITY_IAM
+aws cloudformation create-stack-instances --stack-set-name --accounts 123456789012
+--regions "us-west-1" "us-west-2" "eu-west-1" ...
 ```
 
 #### deploy_reaper Cloudformation template
 
 After the resources for the reaper have been distributed, you can use the `deploy_reaper`
-Cloudformation template to deploy the reaper into an account. In order to deploy the
-reaper, you must supply `HIPCHATTOKEN` and `HIPCHATROOMID` parameter values for the
-`hipchat_notifier` Lambda to communicate to the Hipchat room. You should also supply the
-`S3BucketPrefix` you used from the `deploy_to_s3` Cloudformation template.
+Cloudformation template to deploy the reaper into an account. That template can be found
+in the folder lambdas/ec2/ in this repository. 
+
+The template has five parameters it uses when creating a stack set. They are listed below
+along with their default values (parameters are case sensitive):
+
+1. HIPCHATTOKEN=none
+2. HIPCHATROOMID=none
+3. TerminatorRate=rate(1 hour)
+4. LIVEMODE=FALSE
+5. S3BucketPrefix=ec2-reaper
+
+In order to deploy the reaper you must supply `HIPCHATTOKEN` and `HIPCHATROOMID` parameter 
+values for the `hipchat_notifier` Lambda to communicate to the Hipchat room. 
+Setting LIVEMODE to TRUE will enable the reaper to terminate instances immediately upon stack 
+instance deployment.
+The TerminatorRate and S3BucketPrefix values can be left as is, and shouldn't ever need set explicitly
+
+You will need to follow the steps below for each account you are deploying the reaper into.
 
 1. First, create a stack set representing the account you wish to run the reaper in.
 
 ```
 aws cloudformation create-stack-set --stack-set-name reaper-aws-account --template-body
 file://path/to/deploy_reaper.yaml --capabilities CAPABILITY_IAM --parameters
-ParameterKey=HIPCHATROOMID,ParameterValue=1234567 ...
+ParameterKey=HIPCHATROOMID,ParameterValue=1234567 ParameterKey=HIPCHATTOKEN,ParameterValue=Token ...
 ```
 
 2. Deploy the reaper into the account.
 
 ```
 aws cloudformation create-stack-instances --stack-set-name reaper-aws-account --accounts
-098765432109 --regions us-west-1,us-west-2,eu-west-1 --capabilities CAPABILITY_IAM
+098765432109 --regions "us-west-1" "us-west-2" "eu-west-1" ...
 ```
 
 ### Turning the Reaper On
 
 Don't fear the Reaper is turned on after the stack instances are created; they will not
-reap anything unless the environment variable `LIVE_MODE` is set to `true`. It will
+reap anything unless the environment variable `LIVEMODE` is set to `TRUE`. It will
 only report what it would have done to Hipchat. 
 
 When the time comes to activate the Reaper, update the parameter value `LIVEMODE` to
@@ -142,7 +163,7 @@ When the time comes to activate the Reaper, update the parameter value `LIVEMODE
 
 ```
 aws cloudformation update-stack-set --stack-set-name reaper-aws-account
---use-previous-template --parameters ParameterKey=LIVEMODE,ParameterValue=TRUE
+--use-previous-template --parameters ParameterKey=LIVEMODE,ParameterValue=TRUE --capabilities CAPABILITY_IAM
 ```
 
 ### Components
