@@ -82,6 +82,7 @@ necessary S3 buckets in each region in the administrative account for the Reaper
 Lambdas to read from.
 2. Both roles should be created by deploying cloudformation stacks using the templates in the documentation linked above. You can download the templates by clicking the link in the documentation to the yaml files. You can follow the steps to create a new stack [here](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/cfn-console-create-stack.html)
 3. Make sure to set a stack name that relates to what the stack does (like aws-cf-ar for the aws cloudformation administrator role stack), and use the administrative account ID for the AdministratorAccountID field. 
+4. The Administrator role stack only needs to be deployed into the administrative account. The Execution role needs to be deployed into all accounts and the administrative account.
 
 #### deploy_to_s3 Cloudformation template
 
