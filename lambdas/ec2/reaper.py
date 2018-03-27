@@ -155,18 +155,22 @@ def validate_lifetime_value(lifetime_value):
 
     Return a match object if a match is found; otherwise, return the None from the search method.
     """
-    return re.search(r'^([0-9]+)(w|d|h)$', lifetime_value)
+    search_result = re.search(r'^([0-9]+)(w|d|h)$', lifetime_value)
+    if search_result is None:
+        return None
+    toople = search_result.groups()
+    unit = toople[1]
+    length = int(toople[0])
+    return (length, unit)
 
-
-def calculate_lifetime_delta(lifetime_match):
+def calculate_lifetime_delta(lifetime_tuple):
     """
     :param lifetime_match: Resulting regex match object from validate_lifetime_value.
 
     Convert the regex match from `validate_lifetime_value` into a datetime.timedelta.
     """
-    toople = lifetime_match.groups()
-    unit = toople[1]
-    length = int(toople[0])
+    length = lifetime_tuple[0]
+    unit = lifetime_tuple[1]
     if unit == 'w':
         return datetime.timedelta(weeks=length)
     elif unit =='h':
@@ -222,12 +226,13 @@ def terminate_expired_instances(event, context):
 
     instances = ec2.instances.filter(
         Filters=[{'Name': 'instance-state-name', 'Values': ['running']}])
+    print(instances)
     for instance in instances:
-        if get_tag(instance, 'termination_date') is None:
+        ec2_termination_date = get_tag(instance, 'termination_date')
+        if ec2_termination_date is None:
             print("No termination date found for {0}".format(instance.id))
             improperly_tagged.append(instance)
             continue
-        ec2_termination_date = get_tag(instance, 'termination_date')
         try:
             dateutil.parser.parse(ec2_termination_date) - timenow_with_utc()
         except Exception as e:

@@ -167,6 +167,13 @@ aws cloudformation update-stack-set --stack-set-name reaper-aws-account
 --use-previous-template --parameters ParameterKey=LIVEMODE,ParameterValue=TRUE --capabilities CAPABILITY_IAM
 ```
 
+#### Testing
+
+Run the reaper in no-op mode and ensure that it is behaving as expected; use the 
+hipchat_notifier to get clean reporting, or look at the AWS logs directly. To run
+the unit tests, install nose on your system and run `nose tests/lambdas/` from the
+root of this repository.
+
 ### Components
 
 #### Schema Enforcer
