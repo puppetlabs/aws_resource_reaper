@@ -11,6 +11,8 @@ RED_ALERTS = [
     'REAPER TERMINATION completed but bad tags found'
     ]
 
+NO_ALERT = 'REAPER TERMINATION completed. The following instances have been deleted: []'
+
 def get_account_alias():
     """
     Return the first alias listed from Amazon. Return generic Reaper if unable
@@ -93,6 +95,9 @@ def post(event, context):
     for log_event in event_processed['logEvents']:
 
         message = log_event['message']
+        if NO_ALERT in message
+            return "Success"
+        
         headers = {
             "content-type": "application/json",
             "authorization": "Bearer %s" % V2TOKEN}
