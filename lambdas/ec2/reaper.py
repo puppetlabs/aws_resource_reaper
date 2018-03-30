@@ -1,12 +1,12 @@
 from __future__ import print_function
 
-import boto3
 import datetime
 import time
 import dateutil
 import re
 import os
 from warnings import warn
+import boto3
 
 ec2 = boto3.resource('ec2')
 
@@ -29,6 +29,9 @@ LIVEMODE = determine_live_mode()
 # a termination_date tag to appear for the EC2 instance. Please note that the
 # AWS Lambdas are limited to a 5 minute maximum for their total run time.
 MINUTES_TO_WAIT = 4
+
+#The Indefinite lifetime constant
+INDEFINITE = 'indefinite'
 
 def get_tag(ec2_instance, tag_name):
     """
@@ -77,7 +80,7 @@ def wait_for_tags(ec2_instance, wait_time):
         if termination_date:
             print("'termination_date' tag found!")
             return termination_date
-        lifetime = get_tag(ec2_instance,'lifetime')
+        lifetime = get_tag(ec2_instance, 'lifetime')
         if not lifetime:
             print("No 'lifetime' tag found; sleeping for 15s")
             time.sleep(15)
@@ -88,9 +91,19 @@ def wait_for_tags(ec2_instance, wait_time):
         if not lifetime_match:
             terminate_instance(ec2_instance, 'Invalid lifetime value supplied')
             return
-        lifetime_delta = calculate_lifetime_delta(lifetime_match)
-        future_termination_date = start + lifetime_delta
-        ec2_instance.create_tags(
+        if lifetime_match == INDEFINITE:
+            ec2_instance.create_tags(
+                Tags=[
+                    {
+                        'Key': 'termination_date',
+                        'Value': lifetime_match
+                    }
+                ]
+            )
+        elif lifetime_match != INDEFINITE:
+            lifetime_delta = calculate_lifetime_delta(lifetime_match)
+            future_termination_date = start + lifetime_delta
+            ec2_instance.create_tags(
                 Tags=[
                     {
                         'Key': 'termination_date',
@@ -113,13 +126,31 @@ def terminate_instance(ec2_instance, message):
     Prints a message and terminates an instance if LIVEMODE is True. Otherwise, print out
     the instance id of EC2 resource that would have been deleted.
     """
-    output = "REAPER TERMINATION message(ec2_instance_id={0}): {1}\n".format(ec2_instance.id,message)
+    output = "REAPER TERMINATION message(ec2_instance_id={0}): {1}\n".format(ec2_instance.id, message)
     if LIVEMODE:
         output += 'REAPER TERMINATION enabled: deleting instance {0}'.format(ec2_instance.id)
         print(output)
         ec2_instance.terminate()
     else:
         output += "REAPER TERMINATION not enabled: LIVEMODE is {0}. Would have deleted instance {1}".format(LIVEMODE, ec2_instance.id)
+        print(output)
+
+def stop_instance(ec2_instance, message):
+    """
+
+    :param ec2_instance: a boto3 resource representing an Amazon EC2 Instance.
+    :param message: string explaining why the instance is being terminated
+
+    Prints a message and stop an instance if LIVEMODE is True. Otherwise, print out
+    the instance id of the EC2 resource that would have been deleted
+    """
+    output = "REAPER STOP message (ec2_instance_id{0}): {1}\n".format(ec2_instance.id, message)
+    if LIVEMODE:
+        output += 'REAPER STOP enabled: stopping instance {0}'.format(ec2_instance.id)
+        print(output)
+        ec2_instance.stop()
+    else:
+        output += "REAPER STOP not enabled: LIVEMODE is {0}. Would have stopped instance {1}".format(LIVEMODE, ec2_instance.id)
         print(output)
 
 def validate_ec2_termination_date(ec2_instance):
@@ -130,6 +161,8 @@ def validate_ec2_termination_date(ec2_instance):
     Otherwise, delete the instance.
     """
     termination_date = get_tag(ec2_instance, 'termination_date')
+    if termination_date == INDEFINITE:
+        return
     try:
         dateutil.parser.parse(termination_date) - timenow_with_utc()
     except Exception as e:
@@ -155,30 +188,41 @@ def validate_lifetime_value(lifetime_value):
 
     Return a match object if a match is found; otherwise, return the None from the search method.
     """
-    search_result = re.search(r'^([0-9]+)(w|d|h)$', lifetime_value)
-    if search_result is None:
-        return None
-    toople = search_result.groups()
-    unit = toople[1]
-    length = int(toople[0])
-    return (length, unit)
+    lifetime = (lifetime_value)
+    if lifetime == INDEFINITE:
+        return lifetime
+    elif lifetime != INDEFINITE:
+        search_result = re.search(r'^([0-9]+)(w|d|h|m)$', lifetime_value)
+        if search_result is None:
+            return None
+        toople = search_result.groups()
+        unit = toople[1]
+        length = int(toople[0])
+        return (length, unit)
 
-def calculate_lifetime_delta(lifetime_tuple):
+def calculate_lifetime_delta(lifetime):
     """
     :param lifetime_match: Resulting regex match object from validate_lifetime_value.
 
-    Convert the regex match from `validate_lifetime_value` into a datetime.timedelta.
+    Check the value of the lifetime. If not indefinite convert the regex match from
+    `validate_lifetime_value` into a datetime.timedelta.
     """
-    length = lifetime_tuple[0]
-    unit = lifetime_tuple[1]
-    if unit == 'w':
-        return datetime.timedelta(weeks=length)
-    elif unit =='h':
-        return datetime.timedelta(hours=length)
-    elif unit == 'd':
-        return datetime.timedelta(days=length)
-    else:
-        raise ValueError("Unable to parse the unit '{0}'".format(unit))
+    if lifetime == INDEFINITE:
+        return lifetime
+    elif lifetime != INDEFINITE:
+        lifetime_tuple = lifetime
+        length = lifetime_tuple[0]
+        unit = lifetime_tuple[1]
+        if unit == 'w':
+            return datetime.timedelta(weeks=length)
+        elif unit == 'h':
+            return datetime.timedelta(hours=length)
+        elif unit == 'd':
+            return datetime.timedelta(days=length)
+        elif unit == 'm':
+            return datetime.timedelta(minutes=length)
+        else:
+            raise ValueError("Unable to parse the unit '{0}'".format(unit))
 
 
 # This is the function that the schema_enforcer lambda should run when an instance hits
@@ -231,25 +275,30 @@ def terminate_expired_instances(event, context):
         ec2_termination_date = get_tag(instance, 'termination_date')
         if ec2_termination_date is None:
             print("No termination date found for {0}".format(instance.id))
+            stop_instance(instance, "EC2 instance has no termination_date")
             improperly_tagged.append(instance)
             continue
-        try:
-            dateutil.parser.parse(ec2_termination_date) - timenow_with_utc()
-        except Exception as e:
-            print("Unable to parse the termination_date for {0}".format(instance.id))
-            improperly_tagged.append(instance)
+        if ec2_termination_date != INDEFINITE:
+            try:
+                dateutil.parser.parse(ec2_termination_date) - timenow_with_utc()
+            except Exception as e:
+                print("Unable to parse the termination_date for {0}".format(instance.id))
+                stop_instance(instance, "EC2 instance has invalid termination_date")
+                improperly_tagged.append(instance)
+                continue
+        if ec2_termination_date != INDEFINITE:
+            if dateutil.parser.parse(ec2_termination_date) > timenow_with_utc():
+                ttl = dateutil.parser.parse(ec2_termination_date) - timenow_with_utc()
+                print("EC2 instance will be terminated {0} seconds from now, roughly".format(ttl.seconds))
+            else:
+                terminate_instance(instance, "EC2 instance is expired")
+                deleted_instances.append(instance)
+        if ec2_termination_date == INDEFINITE:
             continue
-
-        if dateutil.parser.parse(ec2_termination_date) > timenow_with_utc():
-            ttl = dateutil.parser.parse(ec2_termination_date) - timenow_with_utc()
-            print("EC2 instance will be terminated {0} seconds from now, roughly".format(ttl.seconds))
-        else:
-            terminate_instance(instance, "EC2 instance is expired")
-            deleted_instances.append(instance)
 
     if LIVEMODE:
-        print("REAPER TERMINATION completed. The following instances have been deleted: {0}".format(deleted_instances))
+        print(("REAPER TERMINATION completed. The following instances have been deleted due to expired termination_date tags: {0}. "
+               "The following instances have been stopped due to unparsable or missing termination_date tags: {1}").format(deleted_instances, improperly_tagged))
     else:
-        print("REAPER TERMINATION completed. LIVEMODE is off, would have deleted the following instances: {0}".format(deleted_instances))
-    if improperly_tagged:
-        print("REAPER TERMINATION completed but bad tags found. Found unparsable or missing termination_date tags for: {0}".format(improperly_tagged))
+        print(("REAPER TERMINATION completed. LIVEMODE is off, would have deleted the following instances: {0}. "
+               "REAPER would have stopped the following instances due to unparsable or missing termination_date tags: {1}").format(deleted_instances, improperly_tagged))

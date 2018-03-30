@@ -17,6 +17,8 @@ def test_determine_live_mode(mock_os):
     assert reaper.determine_live_mode() == False
 
 def test_validate_lifetime_value():
+    assert reaper.validate_lifetime_value('indefinite') == ('indefinite')
+    assert reaper.validate_lifetime_value('5m') == (5, 'm')
     assert reaper.validate_lifetime_value('2h') == (2, 'h')
     assert reaper.validate_lifetime_value('2d') == (2, 'd')
     assert reaper.validate_lifetime_value('2w') == (2, 'w')
@@ -24,6 +26,10 @@ def test_validate_lifetime_value():
     assert reaper.validate_lifetime_value('2t') is None
 
 def test_calculate_lifetime_delta():
+    minute = reaper.validate_lifetime_value('1m')
+    delta = reaper.calculate_lifetime_delta(minute)
+    assert delta.total_seconds() == 60
+
     hour = reaper.validate_lifetime_value('1h')
     delta = reaper.calculate_lifetime_delta(hour)
     assert delta.total_seconds() == 3600
@@ -59,6 +65,19 @@ def test_terminate_instance():
         ec2_mock2 = MagicMock()
         reaper.terminate_instance(ec2_mock, 'test terminate')
         ec2_mock2.terminate.assert_not_called()
+
+def test_stop_instance():
+    with patch.object(reaper, 'LIVEMODE') as mock_live_mode:
+
+        mock_live_mode.return_value = True
+        ec2_mock = MagicMock()
+        reaper.stop_instance(ec2_mock, 'test stop')
+        ec2_mock.stop.assert_called_with()
+
+        mock_live_mode.return_value = False
+        ec2_mock2 = MagicMock()
+        reaper.stop_instance(ec2_mock, 'test stop')
+        ec2_mock2.stop.assert_not_called()
 
 @patch.object(reaper, 'get_tag')
 @patch.object(reaper, 'terminate_instance')
@@ -126,7 +145,6 @@ def test_terminate_expired_instances(mock_ec2, mock_live_mode, mock_get_tag):
     reaper.terminate_expired_instances('event', 'context')
     mock_ec2_instance.terminate.assert_called_with()
 
-
     # ensure that the reaper does not terminate instances with a valid future
     # termination_date
     mock_get_tag.return_value = (reaper.timenow_with_utc() + reaper.datetime.timedelta(hours=1)).isoformat()
@@ -134,3 +152,26 @@ def test_terminate_expired_instances(mock_ec2, mock_live_mode, mock_get_tag):
     reaper.terminate_expired_instances('event', 'context')
     mock_ec2_instance.terminate.assert_not_called()
 
+    #ensure that the reaper does not terminate instances with valid
+    #indefinite tag for termination_date
+    indefinite = 'indefinite'
+    mock_get_tag.return_value = indefinite
+    mock_ec2_instance.reset_mock()
+    reaper.terminate_expired_instances('event', 'context')
+    mock_ec2_instance.terminate.assert_not_called()
+
+    #ensure that reaper stops instances with missing
+    #tag for termination_date
+    none_tag = None
+    mock_get_tag.return_value = none_tag
+    mock_ec2_instance.reset_mock()
+    reaper.terminate_expired_instances('event', 'context')
+    mock_ec2_instance.stop.assert_called()
+
+    #ensure that reaper stops instances with
+    #incorrect tag for termination_date
+    incorrect_tag = '3/7/2018'
+    mock_get_tag.return_value = incorrect_tag
+    mock_ec2_instance.reset_mock()
+    reaper.terminate_expired_instances('event', 'context')
+    mock_ec2_instance.stop.assert_called()
