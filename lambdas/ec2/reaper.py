@@ -85,32 +85,31 @@ def wait_for_tags(ec2_instance, wait_time):
             print("No 'lifetime' tag found; sleeping for 15s")
             time.sleep(15)
             continue
-
         print('lifetime tag found')
+        if lifetime == INDEFINITE:
+            ec2_instance.create_tags(
+                Tags=[
+                    {
+                        'Key': 'termination_date',
+                        'Value': INDEFINITE
+                    }
+                ]
+            )
+            return
         lifetime_match = validate_lifetime_value(lifetime)
         if not lifetime_match:
             terminate_instance(ec2_instance, 'Invalid lifetime value supplied')
             return
-        if lifetime_match == INDEFINITE:
-            ec2_instance.create_tags(
-                Tags=[
-                    {
-                        'Key': 'termination_date',
-                        'Value': lifetime_match
-                    }
-                ]
-            )
-        elif lifetime_match != INDEFINITE:
-            lifetime_delta = calculate_lifetime_delta(lifetime_match)
-            future_termination_date = start + lifetime_delta
-            ec2_instance.create_tags(
-                Tags=[
-                    {
-                        'Key': 'termination_date',
-                        'Value': future_termination_date.isoformat()
-                    }
-                ]
-            )
+        lifetime_delta = calculate_lifetime_delta(lifetime_match)
+        future_termination_date = start + lifetime_delta
+        ec2_instance.create_tags(
+            Tags=[
+                {
+                    'Key': 'termination_date',
+                    'Value': future_termination_date.isoformat()
+                }
+            ]
+        )
 
     # If the above while condition does not return after finding a termination_date,
     # terminate the instance and raise an exception.
@@ -161,8 +160,6 @@ def validate_ec2_termination_date(ec2_instance):
     Otherwise, delete the instance.
     """
     termination_date = get_tag(ec2_instance, 'termination_date')
-    if termination_date == INDEFINITE:
-        return
     try:
         dateutil.parser.parse(termination_date) - timenow_with_utc()
     except Exception as e:
@@ -188,17 +185,13 @@ def validate_lifetime_value(lifetime_value):
 
     Return a match object if a match is found; otherwise, return the None from the search method.
     """
-    lifetime = (lifetime_value)
-    if lifetime == INDEFINITE:
-        return lifetime
-    elif lifetime != INDEFINITE:
-        search_result = re.search(r'^([0-9]+)(w|d|h|m)$', lifetime_value)
-        if search_result is None:
-            return None
-        toople = search_result.groups()
-        unit = toople[1]
-        length = int(toople[0])
-        return (length, unit)
+    search_result = re.search(r'^([0-9]+)(w|d|h|m)$', lifetime_value)
+    if search_result is None:
+        return None
+    toople = search_result.groups()
+    unit = toople[1]
+    length = int(toople[0])
+    return (length, unit)
 
 def calculate_lifetime_delta(lifetime):
     """
@@ -207,22 +200,19 @@ def calculate_lifetime_delta(lifetime):
     Check the value of the lifetime. If not indefinite convert the regex match from
     `validate_lifetime_value` into a datetime.timedelta.
     """
-    if lifetime == INDEFINITE:
-        return lifetime
-    elif lifetime != INDEFINITE:
-        lifetime_tuple = lifetime
-        length = lifetime_tuple[0]
-        unit = lifetime_tuple[1]
-        if unit == 'w':
-            return datetime.timedelta(weeks=length)
-        elif unit == 'h':
-            return datetime.timedelta(hours=length)
-        elif unit == 'd':
-            return datetime.timedelta(days=length)
-        elif unit == 'm':
-            return datetime.timedelta(minutes=length)
-        else:
-            raise ValueError("Unable to parse the unit '{0}'".format(unit))
+    lifetime_tuple = lifetime
+    length = lifetime_tuple[0]
+    unit = lifetime_tuple[1]
+    if unit == 'w':
+        return datetime.timedelta(weeks=length)
+    elif unit == 'h':
+        return datetime.timedelta(hours=length)
+    elif unit == 'd':
+        return datetime.timedelta(days=length)
+    elif unit == 'm':
+        return datetime.timedelta(minutes=length)
+    else:
+        raise ValueError("Unable to parse the unit '{0}'".format(unit))
 
 
 # This is the function that the schema_enforcer lambda should run when an instance hits
@@ -240,7 +230,9 @@ def enforce(event, context):
     instance = ec2.Instance(id=event['detail']['instance-id'])
     try:
         termination_date = wait_for_tags(instance, MINUTES_TO_WAIT)
-        if termination_date:
+        if termination_date == INDEFINITE:
+            return
+        elif termination_date:
             validate_ec2_termination_date(instance)
     except Exception as e:
         # Here we should catch all exceptions, report on the state of the instance, and then
