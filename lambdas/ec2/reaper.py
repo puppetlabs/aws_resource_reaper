@@ -193,14 +193,13 @@ def validate_lifetime_value(lifetime_value):
     length = int(toople[0])
     return (length, unit)
 
-def calculate_lifetime_delta(lifetime):
+def calculate_lifetime_delta(lifetime_tuple):
     """
     :param lifetime_match: Resulting regex match object from validate_lifetime_value.
 
     Check the value of the lifetime. If not indefinite convert the regex match from
     `validate_lifetime_value` into a datetime.timedelta.
     """
-    lifetime_tuple = lifetime
     length = lifetime_tuple[0]
     unit = lifetime_tuple[1]
     if unit == 'w':
@@ -272,19 +271,17 @@ def terminate_expired_instances(event, context):
             continue
         if ec2_termination_date != INDEFINITE:
             try:
-                dateutil.parser.parse(ec2_termination_date) - timenow_with_utc()
+                if dateutil.parser.parse(ec2_termination_date) > timenow_with_utc():
+                    ttl = dateutil.parser.parse(ec2_termination_date) - timenow_with_utc()
+                    print("EC2 instance will be terminated {0} seconds from now, roughly".format(ttl.seconds))
+                else:
+                    terminate_instance(instance, "EC2 instance is expired")
+                    deleted_instances.append(instance)
             except Exception as e:
                 print("Unable to parse the termination_date for {0}".format(instance.id))
                 stop_instance(instance, "EC2 instance has invalid termination_date")
                 improperly_tagged.append(instance)
                 continue
-        if ec2_termination_date != INDEFINITE:
-            if dateutil.parser.parse(ec2_termination_date) > timenow_with_utc():
-                ttl = dateutil.parser.parse(ec2_termination_date) - timenow_with_utc()
-                print("EC2 instance will be terminated {0} seconds from now, roughly".format(ttl.seconds))
-            else:
-                terminate_instance(instance, "EC2 instance is expired")
-                deleted_instances.append(instance)
         if ec2_termination_date == INDEFINITE:
             continue
 
