@@ -83,7 +83,15 @@ def wait_for_tags(ec2_instance, wait_time):
         instance_name = get_tag(ec2_instance, 'Name')
         if instance_name != None:
             if 'opsworks' in instance_name:
-                return instance_name
+                ec2_instance.create_tags(
+                Tags=[
+                    {
+                        'Key': 'termination_date',
+                        'Value': INDEFINITE
+                    }
+                ]
+            )
+            return
         lifetime = get_tag(ec2_instance, 'lifetime')
         if not lifetime:
             print("No 'lifetime' tag found; sleeping for 15s")
@@ -233,9 +241,7 @@ def enforce(event, context):
     instance = ec2.Instance(id=event['detail']['instance-id'])
     try:
         termination_date = wait_for_tags(instance, MINUTES_TO_WAIT)
-        if 'opsworks' in termination_date:
-            return
-        elif termination_date == INDEFINITE:
+        if termination_date == INDEFINITE:
             return
         elif termination_date:
             validate_ec2_termination_date(instance)
@@ -270,9 +276,6 @@ def terminate_expired_instances(event, context):
     print(instances)
     for instance in instances:
         ec2_termination_date = get_tag(instance, 'termination_date')
-        instance_name = get_tag(instance, 'Name')
-        if 'opsworks' in instance_name:
-            continue
         if ec2_termination_date is None:
             print("No termination date found for {0}".format(instance.id))
             stop_instance(instance, "EC2 instance has no termination_date")
