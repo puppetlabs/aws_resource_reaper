@@ -8,8 +8,10 @@ import os
 from urllib2 import Request, urlopen
 
 RED_ALERTS = [
-    'REAPER TERMINATION completed but bad tags found'
+    'The following instances have been stopped due to unparsable or missing termination_date tags'
     ]
+
+NO_ALERT = 'REAPER TERMINATION completed. The following instances have been deleted due to expired termination_date tags: []. The following instances have been stopped due to unparsable or missing termination_date tags: []'
 
 def get_account_alias():
     """
@@ -93,6 +95,8 @@ def post(event, context):
     for log_event in event_processed['logEvents']:
 
         message = log_event['message']
+        if NO_ALERT in message:
+            return "Success"
         headers = {
             "content-type": "application/json",
             "authorization": "Bearer %s" % V2TOKEN}
