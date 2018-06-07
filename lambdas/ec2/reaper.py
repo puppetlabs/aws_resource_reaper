@@ -76,22 +76,21 @@ def wait_for_tags(ec2_instance, wait_time):
 
     while timenow_with_utc() < timeout:
         ec2_instance.load()
-        termination_date = get_tag(ec2_instance, 'termination_date')
-        if termination_date:
-            print("'termination_date' tag found!")
-            return termination_date
         instance_name = get_tag(ec2_instance, 'Name')
         if instance_name != None:
             if 'opsworks' in instance_name:
                 ec2_instance.create_tags(
-                Tags=[
-                    {
-                        'Key': 'termination_date',
-                        'Value': INDEFINITE
-                    }
-                ]
-            )
-            return
+                    Tags=[
+                        {
+                            'Key': 'termination_date',
+                            'Value': INDEFINITE
+                        }
+                    ]
+                )
+        termination_date = get_tag(ec2_instance, 'termination_date')
+        if termination_date:
+            print("'termination_date' tag found!")
+            return termination_date
         lifetime = get_tag(ec2_instance, 'lifetime')
         if not lifetime:
             print("No 'lifetime' tag found; sleeping for 15s")
