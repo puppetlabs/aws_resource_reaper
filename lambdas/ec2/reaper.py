@@ -137,7 +137,7 @@ def terminate_instance(ec2_instance, message):
     Prints a message and terminates an instance if LIVEMODE is True. Otherwise, print out
     the instance id of EC2 resource that would have been deleted.
     """
-    output = "REAPER TERMINATION message(ec2_instance_id={0}): {1}\n".format(ec2_instance.id, message)
+    output = "REAPER TERMINATION: {1} for ec2_instance_id={0}\n".format(ec2_instance.id, message)
     if LIVEMODE:
         output += 'REAPER TERMINATION enabled: deleting instance {0}'.format(ec2_instance.id)
         print(output)
@@ -249,9 +249,8 @@ def enforce(event, context):
         # Here we should catch all exceptions, report on the state of the instance, and then
         # bubble up the original exception.
         instance.load()
-
         warn('Instance {0} current state is {1}. This unexpected exception should be investigated!'.format(instance.id, instance.state['Name']))
-        # TODO: add in code to alert somebody exception happened, or remove
+        #  TODO: add in code to alert somebody exception happened, or remove
         # this comment if cloudwatch starts watching for exceptions from
         # this lambda
         raise
@@ -298,8 +297,18 @@ def terminate_expired_instances(event, context):
             continue
 
     if LIVEMODE:
-        print(("REAPER TERMINATION completed. The following instances have been deleted due to expired termination_date tags: {0}. "
-               "The following instances have been stopped due to unparsable or missing termination_date tags: {1}").format(deleted_instances, improperly_tagged))
+        if len(improperly_tagged) > 0 and len(deleted_instances) < 1:
+            print(("REAPER TERMINATION completed. The following instances have been stopped due to unparsable or missing termination_date tags: {0}.").format(improperly_tagged))
+        elif len(deleted_instances) > 0 and len(improperly_tagged) < 1:
+            print(("REAPER TERMINATION completed. The following instances have been deleted due to expired termination_date tags: {0}.").format(deleted_instances))
+        else:
+            print(("REAPER TERMINATION completed. The following instances have been deleted due to expired termination_date tags: {0}. "
+                "The following instances have been stopped due to unparsable or missing termination_date tags: {1}.").format(deleted_instances, improperly_tagged))
     else:
-        print(("REAPER TERMINATION completed. LIVEMODE is off, would have deleted the following instances: {0}. "
+        if len(improperly_tagged) > 0 and len(deleted_instances) < 1:
+            print("REAPER TERMINATION completed. LIVEMODE is off, would have stopped the following instances due to unparsable or missing termination_date tags: {0} ".format(improperly_tagged))
+        elif len(deleted_instances) > 0 and len(improperly_tagged) < 1:
+            print("REAPER TERMINATION completed. LIVEMODE is off, would have deleted the following instances: {0}. ".format(deleted_instances))
+        else:
+            print(("REAPER TERMINATION completed. LIVEMODE is off, would have deleted the following instances: {0}. "
                "REAPER would have stopped the following instances due to unparsable or missing termination_date tags: {1}").format(deleted_instances, improperly_tagged))

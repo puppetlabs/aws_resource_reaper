@@ -5,13 +5,9 @@ Parameters:
     Default: rate(1 hour)
     Description: The rate at which to check for expired instances
 
-  HIPCHATTOKEN:
+  SLACKWEBHOOK:
     Type: String
-    Description: Token to use when posting notifications to Hipchat
-
-  HIPCHATROOMID:
-    Type: String
-    Description: Which Hipchat room to post to
+    Description: Webhook to use when posting notifications to Slack
 
   LIVEMODE:
     Type: String
@@ -55,7 +51,7 @@ Resources:
           LIVEMODE: !Ref LIVEMODE
       Timeout: 300
       Runtime: python2.7
-      Role: !GetAtt ReaperRole.Arn 
+      Role: !GetAtt ReaperRole.Arn
     DependsOn: ReaperRole
 
   LambdaTerminatorRule:
@@ -64,7 +60,7 @@ Resources:
       Description: Rule for Terminator Lambda
       ScheduleExpression: !Ref TerminatorRate
       State: ENABLED
-      Targets: 
+      Targets:
         -
           Arn: !GetAtt LambdaTerminator.Arn
           Id: !Ref LambdaTerminator
@@ -89,7 +85,7 @@ Resources:
           LIVEMODE: !Ref LIVEMODE
       Timeout: 300
       Runtime: python2.7
-      Role: !GetAtt ReaperRole.Arn 
+      Role: !GetAtt ReaperRole.Arn
     DependsOn: ReaperRole
 
   LambdaSchemaEnforcerRule:
@@ -105,7 +101,7 @@ Resources:
           state:
             - pending
       State: ENABLED
-      Targets: 
+      Targets:
         -
           Arn: !GetAtt LambdaSchemaEnforcer.Arn
           Id: !Ref LambdaSchemaEnforcer
@@ -130,59 +126,58 @@ Resources:
       LogGroupName: !Sub "/aws/lambda/${LambdaSchemaEnforcer}"
       RetentionInDays: 7
 
-  LambdaHipchatNotifierLogGroup:
+  LambdaSlackNotifierLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub "/aws/lambda/${LambdaHipchatNotifier}"
+      LogGroupName: !Sub "/aws/lambda/${LambdaSlackNotifier}"
       RetentionInDays: 7
 
-  LambdaHipchatNotifier:
+  LambdaSlackNotifier:
     Type: AWS::Lambda::Function
     Properties:
       Code:
-        S3Key: hipchat_notifier.zip
+        S3Key: slack_notifier.zip
         S3Bucket: !Sub "${S3BucketPrefix}-${AWS::Region}"
-      Handler: hipchat_notifier.post
+      Handler: slack_notifier.post
       Timeout: 300
       Runtime: python2.7
-      Role: !GetAtt ReaperRole.Arn 
+      Role: !GetAtt ReaperRole.Arn
       Environment:
         Variables:
-          HIPCHATTOKEN: !Ref HIPCHATTOKEN
-          HIPCHATROOMID: !Ref HIPCHATROOMID
+          SLACKWEBHOOK: !Ref SLACKWEBHOOK
     DependsOn: ReaperRole
 
-  SchemaEnforcerHipchatNotifierSubscription:
+  SchemaEnforcerSlackNotifierSubscription:
     Type: AWS::Logs::SubscriptionFilter
     Properties:
-      DestinationArn: !GetAtt LambdaHipchatNotifier.Arn
+      DestinationArn: !GetAtt LambdaSlackNotifier.Arn
       FilterPattern: REAPER TERMINATION
       LogGroupName: !Ref LambdaSchemaEnforcerLogGroup
-    DependsOn: SchemaEnforcerHipchatNotifierPermission
+    DependsOn: SchemaEnforcerSlackNotifierPermission
 
-  TerminatorHipchatNotifierSubscription:
+  TerminatorSlackNotifierSubscription:
     Type: AWS::Logs::SubscriptionFilter
     Properties:
-      DestinationArn: !GetAtt LambdaHipchatNotifier.Arn
+      DestinationArn: !GetAtt LambdaSlackNotifier.Arn
       FilterPattern: REAPER TERMINATION
       LogGroupName: !Ref LambdaTerminatorLogGroup
-    DependsOn: TerminatorHipchatNotifierPermission
+    DependsOn: TerminatorSlackNotifierPermission
 
-  TerminatorHipchatNotifierPermission:
+  TerminatorSlackNotifierPermission:
     Type: AWS::Lambda::Permission
     Properties:
       Action: lambda:InvokeFunction
-      FunctionName: !Ref LambdaHipchatNotifier
+      FunctionName: !Ref LambdaSlackNotifier
       Principal: !Sub "logs.${AWS::Region}.amazonaws.com"
       SourceArn: !Sub
         - ${LogGroupArn}
         - { LogGroupArn: !GetAtt LambdaTerminatorLogGroup.Arn }
 
-  SchemaEnforcerHipchatNotifierPermission:
+  SchemaEnforcerSlackNotifierPermission:
     Type: AWS::Lambda::Permission
     Properties:
       Action: lambda:InvokeFunction
-      FunctionName: !Ref LambdaHipchatNotifier
+      FunctionName: !Ref LambdaSlackNotifier
       Principal: !Sub "logs.${AWS::Region}.amazonaws.com"
       SourceArn: !Sub
         - ${LogGroupArn}

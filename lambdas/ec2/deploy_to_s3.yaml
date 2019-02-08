@@ -12,10 +12,10 @@ Parameters:
     Default: reaper.zip
     Description: Key for the reaper.zip file in the S3 bucket.
 
-  OriginalHipchatNotifierZip:
+  OriginalSlackNotifierZip:
     Type: String
-    Default: hipchat_notifier.zip
-    Description: Key for the reaper.zip file in the S3 bucket.
+    Default: slack_notifier.zip
+    Description: Key for the slack_notifier.zip file in the S3 bucket.
 
   S3BucketPrefix:
     Type: String
@@ -61,7 +61,7 @@ Resources:
     Properties:
       BucketName: !Sub "${S3BucketPrefix}-${AWS::Region}"
       AccessControl: PublicRead
-      
+
   S3CopierLambda:
     Properties:
       Timeout: 180
@@ -93,18 +93,18 @@ Resources:
                         return
                     copy_source = {'Bucket': event['ResourceProperties']['OrigBucketName'],
                         'Key': event['ResourceProperties']['OrigReaperKey']}
-                    s3.meta.client.copy(copy_source, 
+                    s3.meta.client.copy(copy_source,
                         event['ResourceProperties']['NewBucket'],
                         event['ResourceProperties']['OrigReaperKey'])
                     s3.ObjectAcl(event['ResourceProperties']['NewBucket'],
                         event['ResourceProperties']['OrigReaperKey']).put(ACL='public-read')
-                    hc_notifier_copy_source = {'Bucket': event['ResourceProperties']['OrigBucketName'],
-                        'Key': event['ResourceProperties']['OrigHipchatNotifierKey']}
-                    s3.meta.client.copy(hc_notifier_copy_source, 
+                    slack_notifier_copy_source = {'Bucket': event['ResourceProperties']['OrigBucketName'],
+                        'Key': event['ResourceProperties']['OrigSlackNotifierKey']}
+                    s3.meta.client.copy(slack_notifier_copy_source,
                         event['ResourceProperties']['NewBucket'],
-                        event['ResourceProperties']['OrigHipchatNotifierKey'])
+                        event['ResourceProperties']['OrigSlackNotifierKey'])
                     s3.ObjectAcl(event['ResourceProperties']['NewBucket'],
-                        event['ResourceProperties']['OrigHipchatNotifierKey']).put(ACL='public-read')
+                        event['ResourceProperties']['OrigSlackNotifierKey']).put(ACL='public-read')
                 except Exception as e:
                     print('Error copying S3 data')
                     exc_type, exc_value, exc_traceback = sys.exc_info()
@@ -139,7 +139,7 @@ Resources:
                     return True
                 except HTTPError as exc:
                     print("Failed executing HTTP request: {}".format(exc.code))
-                    return False 
+                    return False
       Handler: index.handler
       Role: !GetAtt S3CopierRole.Arn
       Runtime: python2.7
@@ -151,6 +151,5 @@ Resources:
       ServiceToken: !GetAtt S3CopierLambda.Arn
       OrigBucketName: !Ref OriginalS3Bucket
       OrigReaperKey: !Ref OriginalReaperZip
-      OrigHipchatNotifierKey: !Ref OriginalHipchatNotifierZip
+      OrigSlackNotifierKey: !Ref OriginalSlackNotifierZip
       NewBucket: !Ref S3Bucket
-
