@@ -8,10 +8,14 @@ import os
 from urllib2 import Request, urlopen
 
 RED_ALERTS = [
-    'The following instances have been stopped due to unparsable or missing termination_date tags'
+    'The following instances have been stopped due to unparsable or missing termination_date tags:'
     ]
 
-NO_ALERT = 'REAPER TERMINATION completed. The following instances have been deleted due to expired termination_date tags: []. The following instances have been stopped due to unparsable or missing termination_date tags: []'
+NO_ALERT = [
+    'REAPER TERMINATION completed. The following instances have been deleted due to expired termination_date tags: [].',
+    'REAPER TERMINATION completed. The following instances have been stopped due to unparsable or missing termination_date tags: [].',
+    'REAPER TERMINATION completed. The following instances have been deleted due to expired termination_date tags: []. The following instances have been stopped due to unparsable or missing termination_date tags: [].'
+    ]
 
 def get_account_alias():
     """
@@ -25,17 +29,11 @@ def get_account_alias():
         print('Unable to find account alias')
         return 'AWS EC2 Reaper'
 
-def read_token():
+def read_webhook():
     """
-    Read in the environment HIPCHAT_TOKEN.
+    Read in the environment SLACK_WEBHOOK.
     """
-    return os.environ['HIPCHATTOKEN']
-
-def read_room_id():
-    """
-    Read in the environment HIPCHAT_ROOM_ID.
-    """
-    return int(os.environ['HIPCHATROOMID'])
+    return os.environ['SLACKWEBHOOK']
 
 def determine_region():
     """
@@ -60,21 +58,24 @@ def is_red_alert(message):
         if alert in message:
             return True
 
-def determine_hipchat_color(event, message):
+def determine_message_color(event, message):
     """
     :param event: the decompressed AWS Log event.
-    :param message: string of the message to send to hipchat.
+    :param message: string of the message to send to Slack.
 
-    If the message is considered an alarm, a 'red alert', set the hipchat color
-    to red; otherwise, set terminator messages to purple, and set the enforcer
-    messages to the yellow.
+    Set terminator messages to green, and set the enforcer
+    messages to the yellow. If the message has a non enforcer
+    or terminator message set color to red
     """
+    red = '#ff0000'
+    green = '#33cc33'
+    yellow = '#ffff00'
     if is_red_alert(message):
-        return 'red'
-    elif 'terminator' in event['logGroup']:
-        return 'purple'
+        return red
+    elif 'Terminator' in event['logGroup']:
+        return green
     else:
-        return 'yellow' #the default color of hipchat notifications
+        return yellow
 
 def post(event, context):
     """
@@ -83,32 +84,33 @@ def post(event, context):
 
     See http://docs.aws.amazon.com/lambda/latest/dg/python-context-object.html for more info
     on context.
-    Process an AWS Log event and post it to a Hipchat Room.
+    Process an AWS Log event and post it to a Slack Channel.
     """
 
-    V2TOKEN = read_token()
-    ROOMID = read_room_id()
-    url = 'https://api.hipchat.com/v2/room/%d/notification' % ROOMID
+    WEBHOOK = read_webhook()
 
     event_processed = process_subscription_notification(event)
 
     for log_event in event_processed['logEvents']:
 
         message = log_event['message']
-        if NO_ALERT in message:
-            return "Success"
+        for entry in NO_ALERT:
+            if entry in message:
+                return "Success"
         headers = {
-            "content-type": "application/json",
-            "authorization": "Bearer %s" % V2TOKEN}
+            "content-type": "application/json"}
         datastr = json.dumps({
-            'message': message,
-            'color': determine_hipchat_color(event_processed, message),
-            'message_format': 'html',
-            'notify': False,
-            'from': get_account_alias() + " " + determine_region()})
-        request = Request(url, headers=headers, data=datastr)
+            'attachments': [
+                {
+                    'color': determine_message_color(event_processed, message),
+                    'pretext': get_account_alias(),
+                    'author_name': determine_region(),
+                    'text': message
+                }
+            ]})
+        request = Request(WEBHOOK, headers=headers, data=datastr)
         uopen = urlopen(request)
         rawresponse = ''.join(uopen)
         uopen.close()
-        assert uopen.code == 204
+        assert uopen.code == 200
     return "Success"
