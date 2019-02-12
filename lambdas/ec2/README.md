@@ -200,10 +200,11 @@ for that.
 
 The `termination_date` must be in a IS0-8601 format with a UTC offset.
 
-#### Hipchat Notifier
-The Hipchat Notifier is a separate Lambda that can run and post data about 
+#### Slack Notifier
+The Slack Notifier is a separate Lambda that can run and post data about 
 terminated instances; it runs in its own Lambda, tied to the output of both the
 Schema Enforcer and Terminator looking for a "REAPER TERMINATION" string match in
 the output of the either Lambda. A Cloudwatch Log trigger with a filter pattern
-or `REAPER TERMINATION` should be attached to this Lambda, and the hipchat room
-and hipchat auth token should be set as environment variables.
+or `REAPER TERMINATION` should be attached to this Lambda, and a Slack channel webhook
+should be set as an environment variable. You will need to create a Slack app
+in your Slack workspace in order to create the webhook for each channel
