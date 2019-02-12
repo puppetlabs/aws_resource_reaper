@@ -95,8 +95,8 @@ This only needs to be done one time for the administrative account. If new regio
 are added you can just perform step 3 and list the new region.
 
 1. Manually create an S3 bucket accessible from the administrative account. Zip up the
-two python reaper files, `reaper.py` and `hipchat_notifier.py` and place them in the 
-bucket, naming them `reaper.zip` and `hipchat_notifier.zip`. 
+two python reaper files, `reaper.py` and `slack_notifier.py` and place them in the 
+bucket, naming them `reaper.zip` and `slack_notifier.zip`. 
 
 2. From the administrative account, create a new stack set and use the `deploy_to_s3`
 template. An example CLI invocation would look like:
@@ -124,14 +124,13 @@ in the folder lambdas/ec2/ in this repository.
 The template has five parameters it uses when creating a stack set. They are listed below
 along with their default values (parameters are case sensitive):
 
-1. HIPCHATTOKEN=none
-2. HIPCHATROOMID=none
+1. SLACKWEBHOOK=none
 3. TerminatorRate=rate(1 hour)
 4. LIVEMODE=FALSE
 5. S3BucketPrefix=ec2-reaper
 
-In order to deploy the reaper you must supply `HIPCHATTOKEN` and `HIPCHATROOMID` parameter 
-values for the `hipchat_notifier` Lambda to communicate to the Hipchat room. 
+In order to deploy the reaper you must supply the `SLACKWEBHOOK` parameter 
+value for the `slack_notifier` Lambda to communicate to the Slack channel. 
 Setting LIVEMODE to TRUE will enable the reaper to terminate instances immediately upon stack 
 instance deployment.
 The TerminatorRate and S3BucketPrefix values can be left as is, and shouldn't ever need set explicitly
@@ -143,7 +142,7 @@ You will need to follow the steps below for each account you are deploying the r
 ```
 aws cloudformation create-stack-set --stack-set-name reaper-aws-account --template-body
 file://path/to/deploy_reaper.yaml --capabilities CAPABILITY_IAM --parameters
-ParameterKey=HIPCHATROOMID,ParameterValue=1234567 ParameterKey=HIPCHATTOKEN,ParameterValue=Token ...
+ParameterKey=SLACKWEBHOOK,ParameterValue=1234567 ...
 ```
 
 2. Deploy the reaper into the account.
@@ -157,7 +156,7 @@ aws cloudformation create-stack-instances --stack-set-name reaper-aws-account --
 
 Don't fear the Reaper is turned on after the stack instances are created; they will not
 reap anything unless the environment variable `LIVEMODE` is set to `TRUE`. It will
-only report what it would have done to Hipchat. 
+only report what it would have done to Slack. 
 
 When the time comes to activate the Reaper, update the parameter value `LIVEMODE` to
 "TRUE"(the regex is case-insensitive). 
@@ -170,7 +169,7 @@ aws cloudformation update-stack-set --stack-set-name reaper-aws-account
 #### Testing
 
 Run the reaper in no-op mode and ensure that it is behaving as expected; use the 
-hipchat_notifier to get clean reporting, or look at the AWS logs directly. To run
+slack_notifier to get clean reporting, or look at the AWS logs directly. To run
 the unit tests, install nose on your system and run `nose tests/lambdas/` from the
 root of this repository.
 
