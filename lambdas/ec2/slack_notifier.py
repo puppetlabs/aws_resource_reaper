@@ -15,6 +15,9 @@ NO_ALERT = [
     'REAPER TERMINATION completed. The following instances have been deleted due to expired termination_date tags: [].',
     'REAPER TERMINATION completed. The following instances have been stopped due to unparsable or missing termination_date tags: [].',
     'REAPER TERMINATION completed. The following instances have been deleted due to expired termination_date tags: []. The following instances have been stopped due to unparsable or missing termination_date tags: [].'
+    'REAPER TERMINATION completed. LIVEMODE is off, would have stopped the following instances due to unparsable or missing termination_date tags: []',
+    'REAPER TERMINATION completed. LIVEMODE is off, would have deleted the following instances: []',
+    'REAPER TERMINATION completed. LIVEMODE is off, would have deleted the following instances: []. REAPER would have stopped the following instances due to unparsable or missing termination_date tags: []'
     ]
 
 def get_account_alias():
