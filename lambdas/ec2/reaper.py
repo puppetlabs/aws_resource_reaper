@@ -9,6 +9,7 @@ from warnings import warn
 import boto3
 
 ec2 = boto3.resource('ec2')
+elbv2 = boto3.client('elbv2')
 
 def determine_live_mode():
     """
@@ -32,6 +33,20 @@ MINUTES_TO_WAIT = 4
 
 #The Indefinite lifetime constant
 INDEFINITE = 'indefinite'
+
+def get_lb_tag(lb_arn, tag_name):
+    response = elbv2.describe_tags(ResourceArns=[lb_arn])
+    tag_descriptions = response['TagDescriptions']
+    tags = tag_descriptions[0]['Tags']
+
+    if tags is None:
+        return None
+
+    for tag in tags:
+        if tag['Key'] == tag_name:
+            return tag['Value']
+
+    return None
 
 def get_tag(ec2_instance, tag_name):
     """
@@ -258,6 +273,35 @@ def enforce(event, context):
         raise
 
     print('Schema successfully enforced.')
+
+def terminate_expired_load_balancers(event, context):
+    """
+    :param event: AWS CloudWatch event; should be a Cloudwatch Scheduled Event.
+    :param context: Object to determine runtime info of the Lambda function.
+
+    See http://docs.aws.amazon.com/lambda/latest/dg/python-context-object.html for more info
+    on context.
+    """
+    load_balancers = elbv2.describe_load_balancers()
+
+    for load_balancer in load_balancers['LoadBalancers']:
+        lb_arn = load_balancer['LoadBalancerArn']
+        lb_termination_date = get_lb_tag(lb_arn, 'termination_date')
+
+        if lb_termination_date is None:
+            print("No termination date found for load balancer {0}".format(lb_arn))
+            continue
+
+        if lb_termination_date != INDEFINITE:
+            try:
+                if dateutil.parser.parse(lb_termination_date) > timenow_with_utc():
+                    ttl = dateutil.parser.parse(lb_termination_date) - timenow_with_utc()
+                    print("Load balancer {0} will be deleted {1} seconds from now, roughly".format(lb_arn, ttl.seconds))
+            except Exception as e:
+                print("Unable to parse the termination_date for load balancer {0}".format(lb_arn))
+                continue
+        else:
+            continue
 
 # This is the function that a terminator lambda should call periodically to delete instances past their
 # termination_date.
