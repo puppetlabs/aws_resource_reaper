@@ -165,7 +165,7 @@ def delete_load_balancer(lb_arn, message):
     """
 
     # Get the target groups that will be deleted after the load balancer
-    target_groups = elbv2.describe_target_groups(lb_arn)
+    target_groups = elbv2.describe_target_groups(LoadBalancerArn=lb_arn)
 
     output = "REAPER TERMINATION: {1} for load balancer ARN={0}\n".format(lb_arn, message)
     if LIVEMODE:
@@ -176,7 +176,7 @@ def delete_load_balancer(lb_arn, message):
         output += "REAPER TERMINATION not enabled: LIVEMODE is {0}. Would have deleted load balancer {1}".format(LIVEMODE, lb_arn)
         print(output)
 
-    delete_target_groups(target_groups)
+    # delete_target_groups(target_groups)
 
 def terminate_instance(ec2_instance, message):
     """
@@ -335,7 +335,7 @@ def terminate_expired_load_balancers(event, context):
                     print("Load balancer {0} will be deleted {1} seconds from now, roughly".format(lb_arn, ttl.seconds))
                 else:
                     delete_load_balancer(lb_arn, "Load balancer {0} has expired".format(lb_arn))
-                    deleted_instances.append(lb_arn)
+                    deleted_load_balancers.append(lb_arn)
             except Exception as e:
                 print("Unable to parse the termination_date {1} for load balancer {0}".format(lb_arn, lb_termination_date))
                 continue
