@@ -9,6 +9,7 @@ from warnings import warn
 import boto3
 
 ec2 = boto3.resource('ec2')
+elb = boto3.client('elb')
 elbv2 = boto3.client('elbv2')
 
 def determine_live_mode():
@@ -34,32 +35,18 @@ MINUTES_TO_WAIT = 4
 #The Indefinite lifetime constant
 INDEFINITE = 'indefinite'
 
-def get_lb_tag(lb_arn, tag_name):
-    response = elbv2.describe_tags(ResourceArns=[lb_arn])
-    tag_descriptions = response['TagDescriptions']
-    tags = tag_descriptions[0]['Tags']
-
-    if tags is None:
-        return None
-
-    for tag in tags:
-        if tag['Key'] == tag_name:
-            return tag['Value']
-
-    return None
-
-def get_tag(ec2_instance, tag_name):
+def get_tag(tag_array, tag_name):
     """
-    :param ec2_instance: a boto3 resource representing an Amazon EC2 Instance.
-    :param tag_name: A string of the key name you are searching for.
+    :param tag_array: an array of tags with Key/Value pairs.
+    :param tag_name: a string of the key name you are searching for.
 
     This method returns None if the ec2 instance currently has no tags
     or if the tag is not found. If the tag is found, it returns the tag
     value.
     """
-    if ec2_instance.tags is None:
+    if tag_array is None:
         return None
-    for tag in ec2_instance.tags:
+    for tag in tag_array:
         if tag['Key'] == tag_name:
             return tag['Value']
     return None
@@ -91,11 +78,11 @@ def wait_for_tags(ec2_instance, wait_time):
 
     while timenow_with_utc() < timeout:
         ec2_instance.load()
-        termination_date = get_tag(ec2_instance, 'termination_date')
+        termination_date = get_tag(ec2_instance.tags, 'termination_date')
         if termination_date:
             print("'termination_date' tag found!")
             return termination_date
-        instance_name = get_tag(ec2_instance, 'Name')
+        instance_name = get_tag(ec2_instance.tags, 'Name')
         try:
             if 'opsworks' in instance_name:
                 ec2_instance.create_tags(
@@ -109,7 +96,7 @@ def wait_for_tags(ec2_instance, wait_time):
                 return
         except:
             print("No 'Name' tag specified")
-        lifetime = get_tag(ec2_instance, 'lifetime')
+        lifetime = get_tag(ec2_instance.tags, 'lifetime')
         if not lifetime:
             print("No 'lifetime' tag found; sleeping for 15s")
             time.sleep(15)
@@ -145,16 +132,72 @@ def wait_for_tags(ec2_instance, wait_time):
     terminate_instance(ec2_instance,
                        'No termination_date found within {0} minutes of creation'.format(wait_time))
 
+def delete_target_group(tg_arn, message):
+    output = "REAPER TERMINATION: {1} for target group name={0}\n".format(tg_arn, message)
+    if LIVEMODE:
+        output += 'REAPER TERMINATION enabled: deleting target group {0}'.format(tg_arn)
+        print(output)
+        elbv2.delete_target_group(TargetGroupArn=tg_arn)
+    else:
+        output += "REAPER TERMINATION not enabled: LIVEMODE is {0}. Would have deleted target group {1}".format(LIVEMODE, tg_arn)
+        print(output)
+
 def delete_target_groups(target_groups):
     """
     :param target_groups: load balancer target groups to be deleted
 
     Deletes target groups associated with a load balancer that was just deleted
     """
-    for target_group in target_groups:
-        print(target_group)
+    improperly_tagged = []
+    deleted_target_groups = []
 
-def delete_load_balancer(lb_arn, message):
+    for target_group in target_groups:
+        tg_arn = target_group['TargetGroupArn']
+        tags = elbv2.describe_tags(ResourceArns=[tg_arn])
+        tag_descriptions = tags['TagDescriptions']
+        tag_array = tag_descriptions[0]['Tags']
+        tg_termination_date = get_tag(tag_array, 'termination_date')
+
+        if tg_termination_date is None:
+            print("No termination date found for target group {0}".format(tg_arn))
+            improperly_tagged.append(tg_arn)
+            continue
+
+        if tg_termination_date != INDEFINITE:
+            try:
+                if dateutil.parser.parse(tg_termination_date) > timenow_with_utc():
+                    ttl = dateutil.parser.parse(tg_termination_date) - timenow_with_utc()
+                    print("Target group {0} will be deleted {1} seconds from now, roughly".format(tg_arn, ttl.seconds))
+                else:
+                    delete_target_group(tg_arn, "Target group {0} has expired".format(tg_arn))
+                    deleted_target_groups.append(tg_arn)
+            except Exception as e:
+                print(e)
+                print("Unable to parse the termination_date {1} for target group {0}".format(tg_arn, tg_termination_date))
+                continue
+        else:
+            continue
+
+def delete_load_balancer(lb_name, message):
+    """
+    :param lb_name: a classic load balancer name
+    :param message: string explaining why the load balancer is being deleted.
+
+    Prints a message and terminates a load balancer if LIVEMODE is True.
+    Otherwise, print out the name of the load balancer that would have been
+    deleted.
+    """
+
+    output = "REAPER TERMINATION: {1} for load balancer name={0}\n".format(lb_name, message)
+    if LIVEMODE:
+        output += 'REAPER TERMINATION enabled: deleting load balancer {0}'.format(lb_name)
+        print(output)
+        elb.delete_load_balancer(LoadBalancerName=lb_name)
+    else:
+        output += "REAPER TERMINATION not enabled: LIVEMODE is {0}. Would have deleted load balancer {1}".format(LIVEMODE, lb_name)
+        print(output)
+
+def delete_v2_load_balancer(lb_arn, message):
     """
     :param lb_arn: an Amazon Resource Name for a load balancer.
     :param message: string explaining why the load balancer is being deleted.
@@ -166,17 +209,22 @@ def delete_load_balancer(lb_arn, message):
 
     # Get the target groups that will be deleted after the load balancer
     target_groups = elbv2.describe_target_groups(LoadBalancerArn=lb_arn)
+    target_groups_array = target_groups['TargetGroups']
 
     output = "REAPER TERMINATION: {1} for load balancer ARN={0}\n".format(lb_arn, message)
     if LIVEMODE:
         output += 'REAPER TERMINATION enabled: deleting load balancer {0}'.format(lb_arn)
         print(output)
-        elbv2.delete_load_balancer(lb_arn)
+        elbv2.delete_load_balancer(LoadBalancerArn=lb_arn)
+
+        # Wait for the load balancer to be deleted
+        waiter = elbv2.get_waiter('load_balancers_deleted')
+        waiter.wait(LoadBalancerArns=[lb_arn])
     else:
         output += "REAPER TERMINATION not enabled: LIVEMODE is {0}. Would have deleted load balancer {1}".format(LIVEMODE, lb_arn)
         print(output)
 
-    # delete_target_groups(target_groups)
+    delete_target_groups(target_groups_array)
 
 def terminate_instance(ec2_instance, message):
     """
@@ -220,7 +268,7 @@ def validate_ec2_termination_date(ec2_instance):
     Validates that an ec2 instance has a valid termination_date in the future.
     Otherwise, delete the instance.
     """
-    termination_date = get_tag(ec2_instance, 'termination_date')
+    termination_date = get_tag(ec2_instance.tags, 'termination_date')
     try:
         dateutil.parser.parse(termination_date) - timenow_with_utc()
     except Exception as e:
@@ -306,7 +354,47 @@ def enforce(event, context):
 
     print('Schema successfully enforced.')
 
-def terminate_expired_load_balancers(event, context):
+def terminate_expired_classic_load_balancers():
+    """
+    :param event: AWS CloudWatch event; should be a Cloudwatch Scheduled Event.
+    :param context: Object to determine runtime info of the Lambda function.
+
+    See http://docs.aws.amazon.com/lambda/latest/dg/python-context-object.html for more info
+    on context.
+    """
+    improperly_tagged = []
+    deleted_load_balancers = []
+
+    load_balancers = elb.describe_load_balancers()
+
+    for load_balancer in load_balancers['LoadBalancerDescriptions']:
+        lb_name = load_balancer['LoadBalancerName']
+        tags = elb.describe_tags(LoadBalancerNames=[lb_name])
+        tag_descriptions = tags['TagDescriptions']
+        tag_array = tag_descriptions[0]['Tags']
+        lb_termination_date = get_tag(tag_array, 'termination_date')
+
+        if lb_termination_date is None:
+            print("No termination date found for load balancer {0}".format(lb_name))
+            improperly_tagged.append(lb_name)
+            continue
+
+        if lb_termination_date != INDEFINITE:
+            try:
+                if dateutil.parser.parse(lb_termination_date) > timenow_with_utc():
+                    ttl = dateutil.parser.parse(lb_termination_date) - timenow_with_utc()
+                    print("Load balancer {0} will be deleted {1} seconds from now, roughly".format(lb_name, ttl.seconds))
+                else:
+                    delete_load_balancer(lb_name, "Load balancer {0} has expired".format(lb_name))
+                    deleted_load_balancers.append(lb_name)
+            except Exception as e:
+                print(e)
+                print("Unable to parse the termination_date {1} for load balancer {0}".format(lb_name, lb_termination_date))
+                continue
+        else:
+            continue
+
+def terminate_expired_v2_load_balancers():
     """
     :param event: AWS CloudWatch event; should be a Cloudwatch Scheduled Event.
     :param context: Object to determine runtime info of the Lambda function.
@@ -321,7 +409,10 @@ def terminate_expired_load_balancers(event, context):
 
     for load_balancer in load_balancers['LoadBalancers']:
         lb_arn = load_balancer['LoadBalancerArn']
-        lb_termination_date = get_lb_tag(lb_arn, 'termination_date')
+        tags = elbv2.describe_tags(ResourceArns=[lb_arn])
+        tag_descriptions = tags['TagDescriptions']
+        tag_array = tag_descriptions[0]['Tags']
+        lb_termination_date = get_tag(tag_array, 'termination_date')
 
         if lb_termination_date is None:
             print("No termination date found for load balancer {0}".format(lb_arn))
@@ -334,13 +425,18 @@ def terminate_expired_load_balancers(event, context):
                     ttl = dateutil.parser.parse(lb_termination_date) - timenow_with_utc()
                     print("Load balancer {0} will be deleted {1} seconds from now, roughly".format(lb_arn, ttl.seconds))
                 else:
-                    delete_load_balancer(lb_arn, "Load balancer {0} has expired".format(lb_arn))
+                    delete_v2_load_balancer(lb_arn, "Load balancer {0} has expired".format(lb_arn))
                     deleted_load_balancers.append(lb_arn)
             except Exception as e:
+                print(e)
                 print("Unable to parse the termination_date {1} for load balancer {0}".format(lb_arn, lb_termination_date))
                 continue
         else:
             continue
+
+def terminate_expired_load_balancers(event, context):
+    terminate_expired_classic_load_balancers()
+    terminate_expired_v2_load_balancers()
 
 # This is the function that a terminator lambda should call periodically to delete instances past their
 # termination_date.
@@ -359,7 +455,7 @@ def terminate_expired_instances(event, context):
         Filters=[{'Name': 'instance-state-name', 'Values': ['running']}])
     print(instances)
     for instance in instances:
-        ec2_termination_date = get_tag(instance, 'termination_date')
+        ec2_termination_date = get_tag(instance.tags, 'termination_date')
         if ec2_termination_date is None:
             print("No termination date found for {0}".format(instance.id))
             stop_instance(instance, "EC2 instance has no termination_date")
