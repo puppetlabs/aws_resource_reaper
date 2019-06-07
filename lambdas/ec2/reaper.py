@@ -9,6 +9,7 @@ from warnings import warn
 import boto3
 
 ec2 = boto3.resource('ec2')
+ec2_client = boto3.client('ec2')
 elb = boto3.client('elb')
 elbv2 = boto3.client('elbv2')
 
@@ -131,6 +132,16 @@ def wait_for_tags(ec2_instance, wait_time):
     # terminate the instance and raise an exception.
     terminate_instance(ec2_instance,
                        'No termination_date found within {0} minutes of creation'.format(wait_time))
+
+def delete_subnet(sn_id, message):
+    output = "REAPER TERMINATION: {1} for subnet name={0}\n".format(sn_id, message)
+    if LIVEMODE:
+        output += 'REAPER TERMINATION enabled: deleting subnet {0}'.format(sn_id)
+        print(output)
+        ec2_client.delete_subnet(SubnetId=sn_id)
+    else:
+        output += "REAPER TERMINATION not enabled: LIVEMODE is {0}. Would have deleted subnet {1}".format(LIVEMODE, sn_id)
+        print(output)
 
 def delete_target_group(tg_arn, message):
     output = "REAPER TERMINATION: {1} for target group name={0}\n".format(tg_arn, message)
@@ -326,6 +337,45 @@ def enforce(event, context):
 
     print('Schema successfully enforced.')
 
+def terminate_expired_subnets():
+    improperly_tagged = []
+    deleted_subnets = []
+
+    # Get the subnets that will be deleted after the instances
+    subnets = ec2_client.describe_subnets()
+    subnets_array = subnets['Subnets']
+    for subnet in subnets_array:
+        sn_id = subnet['SubnetId']
+        tags = ec2_client.describe_tags(
+            Filters=[
+                {
+                    'Name': 'resource-id',
+                    'Values': [
+                        sn_id,
+                    ]
+                }])
+        tag_array = tags['Tags']
+        termination_date = get_tag(tag_array, 'termination_date')
+
+        if termination_date is None:
+            print("No termination date found for subnet {0}".format(sn_id))
+            improperly_tagged.append(sn_id)
+            continue
+
+        if termination_date != INDEFINITE:
+            try:
+                if dateutil.parser.parse(termination_date) > timenow_with_utc():
+                    ttl = dateutil.parser.parse(termination_date) - timenow_with_utc()
+                    print("Subnet {0} will be deleted {1} seconds from now, roughly".format(sn_id, ttl.seconds))
+                else:
+                    delete_subnet(sn_id, "Subnet {0} has expired".format(sn_id))
+                    deleted_subnets.append(sn_id)
+            except Exception as e:
+                print("Unable to parse the termination_date {1} for subnet {0}".format(sn_id, termination_date))
+                continue
+        else:
+            continue
+
 def terminate_expired_target_groups():
     improperly_tagged = []
     deleted_target_groups = []
@@ -338,23 +388,23 @@ def terminate_expired_target_groups():
         tags = elbv2.describe_tags(ResourceArns=[tg_arn])
         tag_descriptions = tags['TagDescriptions']
         tag_array = tag_descriptions[0]['Tags']
-        tg_termination_date = get_tag(tag_array, 'termination_date')
+        termination_date = get_tag(tag_array, 'termination_date')
 
-        if tg_termination_date is None:
+        if termination_date is None:
             print("No termination date found for target group {0}".format(tg_arn))
             improperly_tagged.append(tg_arn)
             continue
 
-        if tg_termination_date != INDEFINITE:
+        if termination_date != INDEFINITE:
             try:
-                if dateutil.parser.parse(tg_termination_date) > timenow_with_utc():
-                    ttl = dateutil.parser.parse(tg_termination_date) - timenow_with_utc()
+                if dateutil.parser.parse(termination_date) > timenow_with_utc():
+                    ttl = dateutil.parser.parse(termination_date) - timenow_with_utc()
                     print("Target group {0} will be deleted {1} seconds from now, roughly".format(tg_arn, ttl.seconds))
                 else:
                     delete_target_group(tg_arn, "Target group {0} has expired".format(tg_arn))
                     deleted_target_groups.append(tg_arn)
             except Exception as e:
-                print("Unable to parse the termination_date {1} for target group {0}".format(tg_arn, tg_termination_date))
+                print("Unable to parse the termination_date {1} for target group {0}".format(tg_arn, termination_date))
                 continue
         else:
             continue
@@ -370,35 +420,28 @@ def terminate_expired_classic_load_balancers():
         tags = elb.describe_tags(LoadBalancerNames=[lb_name])
         tag_descriptions = tags['TagDescriptions']
         tag_array = tag_descriptions[0]['Tags']
-        lb_termination_date = get_tag(tag_array, 'termination_date')
+        termination_date = get_tag(tag_array, 'termination_date')
 
-        if lb_termination_date is None:
+        if termination_date is None:
             print("No termination date found for load balancer {0}".format(lb_name))
             improperly_tagged.append(lb_name)
             continue
 
-        if lb_termination_date != INDEFINITE:
+        if termination_date != INDEFINITE:
             try:
-                if dateutil.parser.parse(lb_termination_date) > timenow_with_utc():
-                    ttl = dateutil.parser.parse(lb_termination_date) - timenow_with_utc()
+                if dateutil.parser.parse(termination_date) > timenow_with_utc():
+                    ttl = dateutil.parser.parse(termination_date) - timenow_with_utc()
                     print("Load balancer {0} will be deleted {1} seconds from now, roughly".format(lb_name, ttl.seconds))
                 else:
                     delete_load_balancer(lb_name, "Load balancer {0} has expired".format(lb_name))
                     deleted_load_balancers.append(lb_name)
             except Exception as e:
-                print("Unable to parse the termination_date {1} for load balancer {0}".format(lb_name, lb_termination_date))
+                print("Unable to parse the termination_date {1} for load balancer {0}".format(lb_name, termination_date))
                 continue
         else:
             continue
 
 def terminate_expired_v2_load_balancers():
-    """
-    :param event: AWS CloudWatch event; should be a Cloudwatch Scheduled Event.
-    :param context: Object to determine runtime info of the Lambda function.
-
-    See http://docs.aws.amazon.com/lambda/latest/dg/python-context-object.html for more info
-    on context.
-    """
     improperly_tagged = []
     deleted_load_balancers = []
 
@@ -409,23 +452,23 @@ def terminate_expired_v2_load_balancers():
         tags = elbv2.describe_tags(ResourceArns=[lb_arn])
         tag_descriptions = tags['TagDescriptions']
         tag_array = tag_descriptions[0]['Tags']
-        lb_termination_date = get_tag(tag_array, 'termination_date')
+        termination_date = get_tag(tag_array, 'termination_date')
 
-        if lb_termination_date is None:
+        if termination_date is None:
             print("No termination date found for load balancer {0}".format(lb_arn))
             improperly_tagged.append(lb_arn)
             continue
 
-        if lb_termination_date != INDEFINITE:
+        if termination_date != INDEFINITE:
             try:
-                if dateutil.parser.parse(lb_termination_date) > timenow_with_utc():
-                    ttl = dateutil.parser.parse(lb_termination_date) - timenow_with_utc()
+                if dateutil.parser.parse(termination_date) > timenow_with_utc():
+                    ttl = dateutil.parser.parse(termination_date) - timenow_with_utc()
                     print("Load balancer {0} will be deleted {1} seconds from now, roughly".format(lb_arn, ttl.seconds))
                 else:
                     delete_v2_load_balancer(lb_arn, "Load balancer {0} has expired".format(lb_arn))
                     deleted_load_balancers.append(lb_arn)
             except Exception as e:
-                print("Unable to parse the termination_date {1} for load balancer {0}".format(lb_arn, lb_termination_date))
+                print("Unable to parse the termination_date {1} for load balancer {0}".format(lb_arn, termination_date))
                 continue
         else:
             continue
@@ -437,16 +480,16 @@ def terminate_expired_instances():
     instances = ec2.instances.filter(
         Filters=[{'Name': 'instance-state-name', 'Values': ['running']}])
     for instance in instances:
-        ec2_termination_date = get_tag(instance.tags, 'termination_date')
-        if ec2_termination_date is None:
+        termination_date = get_tag(instance.tags, 'termination_date')
+        if termination_date is None:
             print("No termination date found for {0}".format(instance.id))
             stop_instance(instance, "EC2 instance has no termination_date")
             improperly_tagged.append(instance)
             continue
-        if ec2_termination_date != INDEFINITE:
+        if termination_date != INDEFINITE:
             try:
-                if dateutil.parser.parse(ec2_termination_date) > timenow_with_utc():
-                    ttl = dateutil.parser.parse(ec2_termination_date) - timenow_with_utc()
+                if dateutil.parser.parse(termination_date) > timenow_with_utc():
+                    ttl = dateutil.parser.parse(termination_date) - timenow_with_utc()
                     print("EC2 instance will be terminated {0} seconds from now, roughly".format(ttl.seconds))
                 else:
                     terminate_instance(instance, "EC2 instance has expired")
@@ -456,7 +499,7 @@ def terminate_expired_instances():
                 stop_instance(instance, "EC2 instance has invalid termination_date")
                 improperly_tagged.append(instance)
                 continue
-        if ec2_termination_date == INDEFINITE:
+        if termination_date == INDEFINITE:
             continue
 
     if LIVEMODE:
@@ -490,3 +533,4 @@ def terminate_expired_resources(event, context):
     terminate_expired_classic_load_balancers()
     terminate_expired_v2_load_balancers()
     terminate_expired_target_groups()
+    terminate_expired_subnets()
