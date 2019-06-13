@@ -133,6 +133,26 @@ def wait_for_tags(ec2_instance, wait_time):
     terminate_instance(ec2_instance,
                        'No termination_date found within {0} minutes of creation'.format(wait_time))
 
+def delete_vpc(vpc_id, message):
+    output = "REAPER TERMINATION: {1} for VPC name={0}\n".format(vpc_id, message)
+    if LIVEMODE:
+        output += 'REAPER TERMINATION enabled: deleting VPC {0}'.format(vpc_id)
+        print(output)
+        ec2_client.delete_vpc(VpcId=vpc_id)
+    else:
+        output += "REAPER TERMINATION not enabled: LIVEMODE is {0}. Would have deleted VPC {1}".format(LIVEMODE, vpc_id)
+        print(output)
+
+def delete_security_group(sg_id, message):
+    output = "REAPER TERMINATION: {1} for security group name={0}\n".format(sg_id, message)
+    if LIVEMODE:
+        output += 'REAPER TERMINATION enabled: deleting security group {0}'.format(sg_id)
+        print(output)
+        ec2_client.delete_security_group(GroupId=sg_id)
+    else:
+        output += "REAPER TERMINATION not enabled: LIVEMODE is {0}. Would have deleted security group {1}".format(LIVEMODE, sg_id)
+        print(output)
+
 def delete_subnet(sn_id, message):
     output = "REAPER TERMINATION: {1} for subnet name={0}\n".format(sn_id, message)
     if LIVEMODE:
@@ -337,6 +357,84 @@ def enforce(event, context):
 
     print('Schema successfully enforced.')
 
+def terminate_expired_vpcs():
+    improperly_tagged = []
+    deleted_vpcs = []
+
+    # Get the VPCs that will be deleted after everything else
+    vpcs = ec2_client.describe_vpcs()
+    vpcs_array = vpcs['Vpcs']
+    for vpc in vpcs_array:
+        vpc_id = vpc['VpcId']
+        tags = ec2_client.describe_tags(
+            Filters=[
+                {
+                    'Name': 'resource-id',
+                    'Values': [
+                        vpc_id,
+                    ]
+                }])
+        tag_array = tags['Tags']
+        termination_date = get_tag(tag_array, 'termination_date')
+
+        if termination_date is None:
+            print("No termination date found for VPC {0}".format(vpc_id))
+            improperly_tagged.append(vpc_id)
+            continue
+
+        if termination_date != INDEFINITE:
+            try:
+                if dateutil.parser.parse(termination_date) > timenow_with_utc():
+                    ttl = dateutil.parser.parse(termination_date) - timenow_with_utc()
+                    print("VPC {0} will be deleted {1} seconds from now, roughly".format(vpc_id, ttl.seconds))
+                else:
+                    delete_vpc(vpc_id, "VPC {0} has expired".format(vpc_id))
+                    deleted_vpcs.append(vpc_id)
+            except Exception as e:
+                print(e)
+                print("Unable to parse the termination_date {1} for VPC {0}".format(vpc_id, termination_date))
+                continue
+        else:
+            continue
+
+def terminate_expired_security_groups():
+    improperly_tagged = []
+    deleted_security_groups = []
+
+    security_groups = ec2_client.describe_security_groups()
+    security_groups_array = security_groups['SecurityGroups']
+    for security_group in security_groups_array:
+        sg_id = security_group['GroupId']
+        tags = ec2_client.describe_tags(
+            Filters=[
+                {
+                    'Name': 'resource-id',
+                    'Values': [
+                        sg_id,
+                    ]
+                }])
+        tag_array = tags['Tags']
+        termination_date = get_tag(tag_array, 'termination_date')
+
+        if termination_date is None:
+            print("No termination date found for security group {0}".format(sg_id))
+            improperly_tagged.append(sg_id)
+            continue
+
+        if termination_date != INDEFINITE:
+            try:
+                if dateutil.parser.parse(termination_date) > timenow_with_utc():
+                    ttl = dateutil.parser.parse(termination_date) - timenow_with_utc()
+                    print("Security group {0} will be deleted {1} seconds from now, roughly".format(sg_id, ttl.seconds))
+                else:
+                    delete_security_group(sg_id, "Security group {0} has expired".format(sg_id))
+                    deleted_security_groups.append(sg_id)
+            except Exception as e:
+                print("Unable to parse the termination_date {1} for security group {0}".format(sg_id, termination_date))
+                continue
+        else:
+            continue
+
 def terminate_expired_subnets():
     improperly_tagged = []
     deleted_subnets = []
@@ -509,7 +607,7 @@ def terminate_expired_instances():
             print(("REAPER TERMINATION completed. The following instances have been deleted due to expired termination_date tags: {0}.").format(deleted_instances))
         else:
             print(("REAPER TERMINATION completed. The following instances have been deleted due to expired termination_date tags: {0}. "
-                "The following instances have been stopped due to unparsable or missing termination_date tags: {1}.").format(deleted_instances, improperly_tagged))
+                   "The following instances have been stopped due to unparsable or missing termination_date tags: {1}.").format(deleted_instances, improperly_tagged))
     else:
         if len(improperly_tagged) > 0 and len(deleted_instances) < 1:
             print("REAPER TERMINATION completed. LIVEMODE is off, would have stopped the following instances due to unparsable or missing termination_date tags: {0} ".format(improperly_tagged))
@@ -517,7 +615,7 @@ def terminate_expired_instances():
             print("REAPER TERMINATION completed. LIVEMODE is off, would have deleted the following instances: {0}. ".format(deleted_instances))
         else:
             print(("REAPER TERMINATION completed. LIVEMODE is off, would have deleted the following instances: {0}. "
-               "REAPER would have stopped the following instances due to unparsable or missing termination_date tags: {1}").format(deleted_instances, improperly_tagged))
+                   "REAPER would have stopped the following instances due to unparsable or missing termination_date tags: {1}").format(deleted_instances, improperly_tagged))
 
 # This is the function that a terminator lambda should call periodically to
 # delete instances past their termination_date.
@@ -534,3 +632,5 @@ def terminate_expired_resources(event, context):
     terminate_expired_v2_load_balancers()
     terminate_expired_target_groups()
     terminate_expired_subnets()
+    terminate_expired_security_groups()
+    # terminate_expired_vpcs()
