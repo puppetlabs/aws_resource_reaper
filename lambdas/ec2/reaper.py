@@ -9,7 +9,6 @@ from warnings import warn
 import boto3
 
 ec2 = boto3.resource('ec2')
-ec2_client = boto3.client('ec2')
 elb = boto3.client('elb')
 elbv2 = boto3.client('elbv2')
 
@@ -138,7 +137,8 @@ def delete_vpc(vpc_id, message):
     if LIVEMODE:
         output += 'REAPER TERMINATION enabled: deleting VPC {0}'.format(vpc_id)
         print(output)
-        ec2_client.delete_vpc(VpcId=vpc_id)
+        vpc = ec2.Vpc(vpc_id)
+        vpc.delete()
     else:
         output += "REAPER TERMINATION not enabled: LIVEMODE is {0}. Would have deleted VPC {1}".format(LIVEMODE, vpc_id)
         print(output)
@@ -148,9 +148,65 @@ def delete_security_group(sg_id, message):
     if LIVEMODE:
         output += 'REAPER TERMINATION enabled: deleting security group {0}'.format(sg_id)
         print(output)
-        ec2_client.delete_security_group(GroupId=sg_id)
+        security_group = ec2.SecurityGroup(sg_id)
+        security_group.delete()
     else:
         output += "REAPER TERMINATION not enabled: LIVEMODE is {0}. Would have deleted security group {1}".format(LIVEMODE, sg_id)
+        print(output)
+
+def delete_internet_gateway(ig_id, message):
+    output = "REAPER TERMINATION: {1} for internet gateway name={0}\n".format(ig_id, message)
+    if LIVEMODE:
+        output += 'REAPER TERMINATION enabled: deleting internet gateway {0}'.format(ig_id)
+        print(output)
+        internet_gateway = ec2.InternetGateway(ig_id)
+        internet_gateway.delete()
+    else:
+        output += "REAPER TERMINATION not enabled: LIVEMODE is {0}. Would have deleted internet gateway {1}".format(LIVEMODE, ig_id)
+        print(output)
+
+def delete_route_table(rt_id, message):
+    output = "REAPER TERMINATION: {1} for route table name={0}\n".format(rt_id, message)
+    if LIVEMODE:
+        output += 'REAPER TERMINATION enabled: deleting route table {0}'.format(rt_id)
+        print(output)
+        route_table = ec2.RouteTable(rt_id)
+
+        # Delete the route table/subnet associations first
+        route_table_associations = route_table.associations_attribute
+        for route_table_association in route_table_associations:
+            # Cannot delete the main route table association
+            if not route_table_association.main:
+                rta_id = route_table_association['RouteTableAssociationId']
+                rta = ec2.RouteTableAssociation(rta_id)
+                rta.delete()
+
+        route_table.delete()
+    else:
+        output += "REAPER TERMINATION not enabled: LIVEMODE is {0}. Would have deleted route table {1}".format(LIVEMODE, rt_id)
+        print(output)
+
+def delete_network_acl(na_id, message):
+    output = "REAPER TERMINATION: {1} for network ACL name={0}\n".format(na_id, message)
+    if LIVEMODE:
+        output += 'REAPER TERMINATION enabled: deleting network ACL {0}'.format(na_id)
+        print(output)
+        network_acl = ec2.NetworkAcl(na_id)
+        if not network_acl.is_default:
+            network_acl.delete()
+    else:
+        output += "REAPER TERMINATION not enabled: LIVEMODE is {0}. Would have deleted network ACL {1}".format(LIVEMODE, na_id)
+        print(output)
+
+def delete_network_interface(ni_id, message):
+    output = "REAPER TERMINATION: {1} for network interface name={0}\n".format(ni_id, message)
+    if LIVEMODE:
+        output += 'REAPER TERMINATION enabled: deleting network interface {0}'.format(ni_id)
+        print(output)
+        network_interface = ec2.NetworkInterface(ni_id)
+        network_interface.delete()
+    else:
+        output += "REAPER TERMINATION not enabled: LIVEMODE is {0}. Would have deleted network interface {1}".format(LIVEMODE, ni_id)
         print(output)
 
 def delete_subnet(sn_id, message):
@@ -158,7 +214,8 @@ def delete_subnet(sn_id, message):
     if LIVEMODE:
         output += 'REAPER TERMINATION enabled: deleting subnet {0}'.format(sn_id)
         print(output)
-        ec2_client.delete_subnet(SubnetId=sn_id)
+        subnet = ec2.Subnet(sn_id)
+        subnet.delete()
     else:
         output += "REAPER TERMINATION not enabled: LIVEMODE is {0}. Would have deleted subnet {1}".format(LIVEMODE, sn_id)
         print(output)
@@ -362,20 +419,10 @@ def terminate_expired_vpcs():
     deleted_vpcs = []
 
     # Get the VPCs that will be deleted after everything else
-    vpcs = ec2_client.describe_vpcs()
-    vpcs_array = vpcs['Vpcs']
-    for vpc in vpcs_array:
-        vpc_id = vpc['VpcId']
-        tags = ec2_client.describe_tags(
-            Filters=[
-                {
-                    'Name': 'resource-id',
-                    'Values': [
-                        vpc_id,
-                    ]
-                }])
-        tag_array = tags['Tags']
-        termination_date = get_tag(tag_array, 'termination_date')
+    vpcs = ec2.vpcs.all()
+    for vpc in vpcs:
+        vpc_id = vpc.id
+        termination_date = get_tag(vpc.tags, 'termination_date')
 
         if termination_date is None:
             print("No termination date found for VPC {0}".format(vpc_id))
@@ -391,8 +438,119 @@ def terminate_expired_vpcs():
                     delete_vpc(vpc_id, "VPC {0} has expired".format(vpc_id))
                     deleted_vpcs.append(vpc_id)
             except Exception as e:
-                print(e)
                 print("Unable to parse the termination_date {1} for VPC {0}".format(vpc_id, termination_date))
+                continue
+        else:
+            continue
+
+def terminate_expired_internet_gateways():
+    improperly_tagged = []
+    deleted_internet_gateways = []
+
+    internet_gateways = ec2.internet_gateways.all()
+    for internet_gateway in internet_gateways:
+        ig_id = internet_gateway.id
+        termination_date = get_tag(internet_gateway.tags, 'termination_date')
+
+        if termination_date is None:
+            print("No termination date found for internet gateway {0}".format(ig_id))
+            improperly_tagged.append(ig_id)
+            continue
+
+        if termination_date != INDEFINITE:
+            try:
+                if dateutil.parser.parse(termination_date) > timenow_with_utc():
+                    ttl = dateutil.parser.parse(termination_date) - timenow_with_utc()
+                    print("Internet gateway {0} will be deleted {1} seconds from now, roughly".format(ig_id, ttl.seconds))
+                else:
+                    delete_internet_gateway(ig_id, "Internet gateway {0} has expired".format(ig_id))
+                    deleted_internet_gateways.append(ig_id)
+            except Exception as e:
+                print("Unable to parse the termination_date {1} for internet gateway {0}".format(ig_id, termination_date))
+                continue
+        else:
+            continue
+
+def terminate_expired_route_tables():
+    improperly_tagged = []
+    deleted_route_tables = []
+
+    route_tables = ec2.route_tables.all()
+    for route_table in route_tables:
+        rt_id = route_table.id
+        termination_date = get_tag(route_table.tags, 'termination_date')
+
+        if termination_date is None:
+            print("No termination date found for route table {0}".format(rt_id))
+            improperly_tagged.append(rt_id)
+            continue
+
+        if termination_date != INDEFINITE:
+            try:
+                if dateutil.parser.parse(termination_date) > timenow_with_utc():
+                    ttl = dateutil.parser.parse(termination_date) - timenow_with_utc()
+                    print("Route table {0} will be deleted {1} seconds from now, roughly".format(rt_id, ttl.seconds))
+                else:
+                    delete_route_table(rt_id, "Route table {0} has expired".format(rt_id))
+                    deleted_route_tables.append(rt_id)
+            except Exception as e:
+                print("Unable to parse the termination_date {1} for route table {0}".format(rt_id, termination_date))
+                continue
+        else:
+            continue
+
+def terminate_expired_network_acls():
+    improperly_tagged = []
+    deleted_network_acls = []
+
+    network_acls = ec2.network_acls.all()
+    for network_acl in network_acls:
+        na_id = network_acl.id
+        termination_date = get_tag(network_acl.tags, 'termination_date')
+
+        if termination_date is None:
+            print("No termination date found for network ACL {0}".format(na_id))
+            improperly_tagged.append(na_id)
+            continue
+
+        if termination_date != INDEFINITE:
+            try:
+                if dateutil.parser.parse(termination_date) > timenow_with_utc():
+                    ttl = dateutil.parser.parse(termination_date) - timenow_with_utc()
+                    print("Network ACL {0} will be deleted {1} seconds from now, roughly".format(na_id, ttl.seconds))
+                else:
+                    delete_network_acl(na_id, "Network ACL {0} has expired".format(na_id))
+                    deleted_network_acls.append(na_id)
+            except Exception as e:
+                print("Unable to parse the termination_date {1} for network ACL {0}".format(na_id, termination_date))
+                continue
+        else:
+            continue
+
+def terminate_expired_network_interfaces():
+    improperly_tagged = []
+    deleted_network_interfaces = []
+
+    network_interfaces = ec2.network_interfaces.all()
+    for network_interface in network_interfaces:
+        ni_id = network_interface.id
+        termination_date = get_tag(network_interface.tag_set, 'termination_date')
+
+        if termination_date is None:
+            print("No termination date found for network interface {0}".format(ni_id))
+            improperly_tagged.append(ni_id)
+            continue
+
+        if termination_date != INDEFINITE:
+            try:
+                if dateutil.parser.parse(termination_date) > timenow_with_utc():
+                    ttl = dateutil.parser.parse(termination_date) - timenow_with_utc()
+                    print("Network interface {0} will be deleted {1} seconds from now, roughly".format(ni_id, ttl.seconds))
+                else:
+                    delete_network_interface(ni_id, "Network interface {0} has expired".format(ni_id))
+                    deleted_network_interfaces.append(ni_id)
+            except Exception as e:
+                print("Unable to parse the termination_date {1} for network interface {0}".format(ni_id, termination_date))
                 continue
         else:
             continue
@@ -401,20 +559,10 @@ def terminate_expired_security_groups():
     improperly_tagged = []
     deleted_security_groups = []
 
-    security_groups = ec2_client.describe_security_groups()
-    security_groups_array = security_groups['SecurityGroups']
-    for security_group in security_groups_array:
-        sg_id = security_group['GroupId']
-        tags = ec2_client.describe_tags(
-            Filters=[
-                {
-                    'Name': 'resource-id',
-                    'Values': [
-                        sg_id,
-                    ]
-                }])
-        tag_array = tags['Tags']
-        termination_date = get_tag(tag_array, 'termination_date')
+    security_groups = ec2.security_groups.all()
+    for security_group in security_groups:
+        sg_id = security_group.id
+        termination_date = get_tag(security_group.tags, 'termination_date')
 
         if termination_date is None:
             print("No termination date found for security group {0}".format(sg_id))
@@ -440,20 +588,10 @@ def terminate_expired_subnets():
     deleted_subnets = []
 
     # Get the subnets that will be deleted after the instances
-    subnets = ec2_client.describe_subnets()
-    subnets_array = subnets['Subnets']
-    for subnet in subnets_array:
-        sn_id = subnet['SubnetId']
-        tags = ec2_client.describe_tags(
-            Filters=[
-                {
-                    'Name': 'resource-id',
-                    'Values': [
-                        sn_id,
-                    ]
-                }])
-        tag_array = tags['Tags']
-        termination_date = get_tag(tag_array, 'termination_date')
+    subnets = ec2.subnets.all()
+    for subnet in subnets:
+        sn_id = subnet.id
+        termination_date = get_tag(subnet.tags, 'termination_date')
 
         if termination_date is None:
             print("No termination date found for subnet {0}".format(sn_id))
@@ -631,6 +769,10 @@ def terminate_expired_resources(event, context):
     terminate_expired_classic_load_balancers()
     terminate_expired_v2_load_balancers()
     terminate_expired_target_groups()
+    terminate_expired_internet_gateways()
+    terminate_expired_route_tables()
+    terminate_expired_network_acls()
+    terminate_expired_network_interfaces()
     terminate_expired_subnets()
     terminate_expired_security_groups()
-    # terminate_expired_vpcs()
+    terminate_expired_vpcs()
