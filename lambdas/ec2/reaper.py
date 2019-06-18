@@ -697,6 +697,23 @@ def terminate_expired_v2_load_balancers():
         else:
             continue
 
+    if LIVEMODE:
+        if len(improperly_tagged) > 0 and len(deleted_load_balancers) < 1:
+            print(("REAPER TERMINATION completed. The following load balancers have been ignored due to unparsable or missing termination_date tags: {0}.").format(improperly_tagged))
+        elif len(deleted_load_balancers) > 0 and len(improperly_tagged) < 1:
+            print(("REAPER TERMINATION completed. The following load balancers have been deleted due to expired termination_date tags: {0}.").format(deleted_load_balancers))
+        else:
+            print(("REAPER TERMINATION completed. The following load balancers have been deleted due to expired termination_date tags: {0}. "
+                   "The following load balancers have been ignored due to unparsable or missing termination_date tags: {1}.").format(deleted_load_balancers, improperly_tagged))
+    else:
+        if len(improperly_tagged) > 0 and len(deleted_load_balancers) < 1:
+            print("REAPER TERMINATION completed. LIVEMODE is off, would have ignored the following load balancers due to unparsable or missing termination_date tags: {0} ".format(improperly_tagged))
+        elif len(deleted_load_balancers) > 0 and len(improperly_tagged) < 1:
+            print("REAPER TERMINATION completed. LIVEMODE is off, would have deleted the following load balancers: {0}. ".format(deleted_load_balancers))
+        else:
+            print(("REAPER TERMINATION completed. LIVEMODE is off, would have deleted the following load balancers: {0}. "
+                   "REAPER would have ignored the following load balancers due to unparsable or missing termination_date tags: {1}").format(deleted_load_balancers, improperly_tagged))
+
 def terminate_expired_instances():
     improperly_tagged = []
     deleted_instances = []
