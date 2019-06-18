@@ -285,20 +285,8 @@ def terminate_instance(ec2_instance, message):
         output += 'REAPER TERMINATION enabled: deleting instance {0}'.format(ec2_instance.id)
         print(output)
         ec2_instance.terminate()
-        waiter = ec2.get_waiter('instance_terminated')
-        waiter.wait(
-            Filters=[
-                {
-                    'Name': 'network-interface.attachment.status',
-                    'Values': [
-                        'detached',
-                    ]
-                },
-            ],
-            InstanceIds=[
-                ec2_instance.id,
-            ]
-        )
+        waiter = ec2.meta.client.get_waiter('instance_terminated')
+        waiter.wait(InstanceIds=[ec2_instance.id])
     else:
         output += "REAPER TERMINATION not enabled: LIVEMODE is {0}. Would have deleted instance {1}".format(LIVEMODE, ec2_instance.id)
         print(output)
