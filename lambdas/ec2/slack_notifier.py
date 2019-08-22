@@ -1,25 +1,11 @@
 #!/usr/bin/env python
-import boto3
 import json
 import ast
 import zlib
 import base64
 import os
 from urllib2 import Request, urlopen
-
-RED_ALERTS = [
-    'The following instances have been stopped due to unparsable or missing termination_date tags:'
-    ]
-
-NO_ALERT = [
-    'REAPER TERMINATION completed. The following instances have been deleted due to expired termination_date tags: [].',
-    'REAPER TERMINATION completed. The following instances have been stopped due to unparsable or missing termination_date tags: [].',
-    'REAPER TERMINATION completed. The following instances have been deleted due to expired termination_date tags: []. The following instances have been stopped due to unparsable or missing termination_date tags: [].'
-    'REAPER TERMINATION completed. LIVEMODE is off, would have stopped the following instances due to unparsable or missing termination_date tags: []',
-    'REAPER TERMINATION completed. LIVEMODE is off, would have deleted the following instances: []',
-    'REAPER TERMINATION completed. LIVEMODE is off, would have deleted the following instances: []. REAPER would have stopped the following instances due to unparsable or missing termination_date tags: []',
-    'REAPER TERMINATION completed. LIVEMODE is off, would have deleted the following load balancers: []. REAPER would have ignored the following load balancers due to unparsable or missing termination_date tags: []'
-    ]
+import boto3
 
 def get_account_alias():
     """
@@ -29,7 +15,7 @@ def get_account_alias():
     client = boto3.client('iam')
     try:
         return client.list_account_aliases()['AccountAliases'][0]
-    except Exception:
+    except ValueError:
         print('Unable to find account alias')
         return 'AWS EC2 Reaper'
 
@@ -58,9 +44,22 @@ def process_subscription_notification(event):
     return event_dict
 
 def is_red_alert(message):
-    for alert in RED_ALERTS:
-        if alert in message:
-            return True
+    """Checks message for the word STOPPED. If word is found, returns True
+    :param message: The console message being read
+
+    Returns
+        Boolean
+    """
+    return bool("STOPPED" in message)
+
+def is_missing_tag(message):
+    """Checks message for the word FOUND. If word is found, returns True
+    :param message: The console message being read
+
+    Returns
+        Boolean
+    """
+    return bool("FOUND" in message)
 
 def determine_message_color(event, message):
     """
@@ -74,12 +73,16 @@ def determine_message_color(event, message):
     red = '#ff0000'
     green = '#33cc33'
     yellow = '#ffff00'
+    orange = "#ff7f50"
     if is_red_alert(message):
-        return red
+        alert = red
+    elif is_missing_tag(message):
+        alert = orange
     elif 'Terminator' in event['logGroup']:
-        return green
+        alert = green
     else:
-        return yellow
+        alert = yellow
+    return alert
 
 def post(event, context):
     """
@@ -91,16 +94,13 @@ def post(event, context):
     Process an AWS Log event and post it to a Slack Channel.
     """
 
-    WEBHOOK = read_webhook()
+    webhook = read_webhook()
 
     event_processed = process_subscription_notification(event)
 
     for log_event in event_processed['logEvents']:
 
         message = log_event['message']
-        for entry in NO_ALERT:
-            if entry in message:
-                return "Success"
         headers = {
             "content-type": "application/json"}
         datastr = json.dumps({
@@ -112,9 +112,11 @@ def post(event, context):
                     'text': message
                 }
             ]})
-        request = Request(WEBHOOK, headers=headers, data=datastr)
+        request = Request(webhook, headers=headers, data=datastr)
         uopen = urlopen(request)
         rawresponse = ''.join(uopen)
         uopen.close()
         assert uopen.code == 200
+        if uopen.code != 200:
+            print(rawresponse)
     return "Success"
