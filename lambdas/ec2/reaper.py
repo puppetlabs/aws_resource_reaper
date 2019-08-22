@@ -6,84 +6,166 @@ import boto3
 
 from reaper_class import ResourceReaper
 
-SERVICES = [
-    'ec2'
-    # 'elb',
-    # 'elbv2'
-]
-LIVE_TERMINATION_MESSAGE = "REAPER TERMINATED {0} with ids {1}"
-NOOP_TERMINATION_MESSAGE = "REAPER NOOP: Would have terminated {0} with ids {1}"
-STOPPED_MESSAGE = "REAPER STOPPED {0} with ids {1} due to missing or unparsable termination_date tag"
-NOOP_STOPPED = "REAPER NOOP: Would have stopped {0} with ids {1} due to missing or unparsable termination_date tag"
-IMPROPER_TAGS = "REAPER FOUND {0} with ids {1} are missing termination_date tags!"
-LIVEMODE = determine_live_mode()
+# List of AWS services to manage
+SERVICES = ["elb", "elbv2", "ec2"]
 
+# Terminator messages to be printed to the console, then sent to Slack
+LIVE_TERMINATION_MESSAGE = (
+    "REAPER TERMINATED {0} with ids {1} due to expired termination_date tags"
+)
+NOOP_TERMINATION_MESSAGE = (
+    "REAPER NOOP: Would have terminated {0} with ids {1} due to expired termination_date tags"
+)
+STOPPED_MESSAGE = (
+    "REAPER STOPPED {0} with ids {1} due to missing or unparsable termination_date tag"
+)
+NOOP_STOPPED = (
+    "REAPER NOOP: Would have stopped {0} with ids {1} due to missing or unparsable termination_date tag"
+)
+IMPROPER_TAGS = "REAPER FOUND {0} with ids {1} are missing termination_date tags!"
+
+# Whether or not the reaper should actually delete resources
+LIVEMODE = False
+
+# Determines whether or not LIVEMODE is true based on environment variable in AWS lambda
 def determine_live_mode():
     """
     Returns True if LIVEMODE is set to true in the shell environment, False for
     all other cases.
     """
-    if 'LIVEMODE' in os.environ:
-        return re.search(r'(?i)^true$', os.environ['LIVEMODE']) is not None
+    if "LIVEMODE" in os.environ:
+        return re.search(r"(?i)^true$", os.environ["LIVEMODE"]) is not None
     else:
         return False
 
-for service in SERVICES:
-    reaper = ResourceReaper(service)
-    if service != 'ec2':
-        boto_resource = boto3.client(
-            service,
-            # Variables below for local testing
-            # aws_access_key_id=,
-            # aws_secret_access_key=,
-            # region_name="us-west-1"
+
+# This is the function that the schema_enforcer lambda should run when an instance hits
+# the pending state.
+def enforce(event, context, livemode):
+    """
+    :param event: AWS CloudWatch event; should be a configured for when the state is pending.
+    :param context: Object to determine runtime info of the Lambda function.
+
+    See http://docs.aws.amazon.com/lambda/latest/dg/python-context-object.html for more info
+    on context.
+    """
+    ec2 = boto3.resource("ec2")
+    print(event)
+    print(event["detail"]["instance-id"])
+    instance = ec2.Instance(id=event["detail"]["instance-id"])
+    reaper = ResourceReaper(service=ec2, livemode=livemode)
+    try:
+        termination_date = reaper.wait_for_tags(instance)
+        if termination_date:
+            output = reaper.validate_ec2_termination_date(instance)
+    except:
+        # Here we should catch all exceptions, report on the state of the instance, and then
+        # bubble up the original exception.
+        instance.load()
+        print(
+            "Instance {0} current state is {1}. This unexpected exception should be investigated!".format(
+                instance.id, instance.state["Name"]
+            )
         )
-        items = reaper.terminate_expired_load_balancers(service, livemode=LIVEMODE)
-        if items['deleted']:
-            if LIVEMODE:
-                print(LIVE_TERMINATION_MESSAGE.format(service, items['deleted']))
-            else:
-                print(NOOP_TERMINATION_MESSAGE.format(service, items['deleted']))
-        if items['improperly_tagged']:
-            print(IMPROPER_TAGS.format(service, items['improperly_tagged']))
-        if 'elbv2' in service:
-            target_groups = reaper.terminate_expired_target_groups(service, livemode=LIVEMODE)
-            if target_groups['deleted']:
+        raise
+
+    print("Schema successfully enforced.\n")
+    print(output)
+
+
+# Loops through services list to pass each to the reaper class
+def resource_reaper(services):
+    """
+    Loops through services listed in the SERVICES list and checks for
+    termination dates for resources being used in those services. If
+    termination_date tags are found and are expired, resources are
+    destroyed. Resources without tags are reported to Slack
+
+    : param: services: The list of services that should be checked
+        example: [ec2 (elastic compute), elb (elastic load balancers)]
+
+    Returns
+        None
+    """
+    for service in services:
+        if service != "ec2":
+            boto_resource = boto3.client(
+                service,
+                # Variables below for local testing
+                # aws_access_key_id=,
+                # aws_secret_access_key=,
+                # region_name="us-west-2",
+            )
+            reaper = ResourceReaper(service=boto_resource, livemode=LIVEMODE)
+            items = reaper.terminate_expired_load_balancers()
+            if items["deleted"]:
                 if LIVEMODE:
-                    print(LIVE_TERMINATION_MESSAGE.format('target group', target_groups['deleted']))
+                    print(
+                        LIVE_TERMINATION_MESSAGE.format(service + "s", items["deleted"])
+                    )
                 else:
-                    print(NOOP_TERMINATION_MESSAGE.format('target group', target_groups['deleted']))
-            if target_groups['improperly_tagged']:
-                print(IMPROPER_TAGS.format('target group', target_groups['improperly_tagged']))
-    elif 'ec2' in service:
-        boto_resource = boto3.resource(
-            service,
-            # Variables below for local testing
-            # aws_access_key_id=,
-            # aws_secret_access_key=,
-            # region_name="us-west-1"
-        )
-        resources = [
-            'instances',
-            'internet_gateways',
-            'route_tables',
-            'network_acls',
-            'network_interfaces',
-            'security_groups',
-            'subnets',
-            'vpcs'
-        ]
-        for resource in resources:
-            items = reaper.terminate_expired_ec2_resources(boto_resource, resource, livemode=LIVEMODE)
-            if items['deleted']:
-                if LIVEMODE:
-                    print(LIVE_TERMINATION_MESSAGE.format(resource, items['deleted']))
-                else:
-                    print(NOOP_TERMINATION_MESSAGE.format(resource, items['deleted']))
-            if items['improperly_tagged']:
-                print(IMPROPER_TAGS.format(resource, items['improperly_tagged']))
-            if items['stopped']:
-                if LIVEMODE:
-                    print(STOPPED_MESSAGE.format(resource, items['stopped']))
-                else:
-                    print(NOOP_STOPPED.format(resource, items['stopped']))
+                    print(
+                        NOOP_TERMINATION_MESSAGE.format(service + "s", items["deleted"])
+                    )
+            if items["improperly_tagged"]:
+                print(IMPROPER_TAGS.format(service + "s", items["improperly_tagged"]))
+            if "elbv2" in service:
+                target_groups = reaper.terminate_expired_target_groups()
+                if target_groups["deleted"]:
+                    if LIVEMODE:
+                        print(
+                            LIVE_TERMINATION_MESSAGE.format(
+                                "target_groups", target_groups["deleted"]
+                            )
+                        )
+                    else:
+                        print(
+                            NOOP_TERMINATION_MESSAGE.format(
+                                "target_groups", target_groups["deleted"]
+                            )
+                        )
+                if target_groups["improperly_tagged"]:
+                    print(
+                        IMPROPER_TAGS.format(
+                            "target_group", target_groups["improperly_tagged"]
+                        )
+                    )
+        elif "ec2" in service:
+            boto_resource = boto3.resource(
+                service,
+                # Variables below for local testing
+                # aws_access_key_id=,
+                # aws_secret_access_key=,
+                # region_name="us-west-2",
+            )
+            reaper = ResourceReaper(service=boto_resource, livemode=LIVEMODE)
+            # EC2 resources to be deleted by the reaper
+            resources = [
+                "instances",
+                "internet_gateways",
+                "route_tables",
+                "network_acls",
+                "network_interfaces",
+                "security_groups",
+                "subnets",
+                "vpcs",
+            ]
+            # Loops through the resources list to delete resources attached to EC2 instances
+            for resource in resources:
+                items = reaper.terminate_expired_ec2_resources(resource)
+                if items["deleted"]:
+                    if LIVEMODE:
+                        print(
+                            LIVE_TERMINATION_MESSAGE.format(resource, items["deleted"])
+                        )
+                    else:
+                        print(
+                            NOOP_TERMINATION_MESSAGE.format(resource, items["deleted"])
+                        )
+                if items["improperly_tagged"]:
+                    print(IMPROPER_TAGS.format(resource, items["improperly_tagged"]))
+                if items["stopped"]:
+                    if LIVEMODE:
+                        print(STOPPED_MESSAGE.format(resource, items["stopped"]))
+                    else:
+                        print(NOOP_STOPPED.format(resource, items["stopped"]))

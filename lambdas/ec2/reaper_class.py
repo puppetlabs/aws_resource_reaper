@@ -1,19 +1,19 @@
-from __future__ import print_function
-
 import datetime
 import time
-import dateutil
 import re
-import os
-from warnings import warn
+import dateutil
 
-class ResourceReaper(object):
-    """A class for AWS resources that need automatically
-    deprovisioned.
+
+class ResourceReaper:
+    """A class for managing AWS resources that need
+    automatically deprovisioned.
     """
-    def __init__(self, service):
-        self.service_name = service
-        self.prod_infra = 'prod_infra'
+
+    def __init__(self, service, livemode):
+        self.service = service
+        self.livemode = livemode
+        self.wait_time = 4
+        self.prod_infra = "prod_infra"
 
     def get_tag(self, tag_array, tag_name):
         """
@@ -25,21 +25,26 @@ class ResourceReaper(object):
         value.
         """
         if tag_array is None:
-            return None
-        for tag in tag_array:
-            if tag['Key'] == tag_name:
-                return tag['Value']
-        return None
+            output = None
+        elif tag_array == []:
+            output = None
+        else:
+            for tag in tag_array:
+                if tag["Key"] == tag_name:
+                    output = tag["Value"]
+                else:
+                    output = None
+        return output
 
     def timenow_with_utc(self):
         """
         Return a datetime object that includes the tzinfo for utc time.
         """
-        time = datetime.datetime.utcnow()
-        time = time.replace(tzinfo=dateutil.tz.tz.tzutc())
-        return time
+        timenow = datetime.datetime.utcnow()
+        timenow = timenow.replace(tzinfo=dateutil.tz.tz.tzutc())
+        return timenow
 
-    def wait_for_tags(self, ec2_instance, wait_time):
+    def wait_for_tags(self, ec2_instance):
         """
         :param ec2_instance: a boto3 resource representing an Amazon EC2 Instance
         :param wait_time: The number of minutes to wait for the 'termination_date'
@@ -54,51 +59,50 @@ class ResourceReaper(object):
         None.
         """
         start = self.timenow_with_utc()
-        timeout = start + datetime.timedelta(minutes=wait_time)
+        timeout = start + datetime.timedelta(minutes=self.wait_time)
 
         while self.timenow_with_utc() < timeout:
             ec2_instance.load()
-            termination_date = self.get_tag(ec2_instance.tags, 'termination_date')
+            termination_date = self.get_tag(ec2_instance.tags, "termination_date")
             if termination_date:
                 print("'termination_date' tag found!")
                 return termination_date
-            lifetime = self.get_tag(ec2_instance.tags, 'lifetime')
+            lifetime = self.get_tag(ec2_instance.tags, "lifetime")
             if not lifetime:
                 print("No 'lifetime' tag found; sleeping for 15s")
                 time.sleep(15)
                 continue
-            print('lifetime tag found')
+            print("lifetime tag found")
             if lifetime == self.prod_infra:
                 ec2_instance.create_tags(
-                    Tags=[
-                        {
-                            'Key': 'termination_date',
-                            'Value': self.prod_infra
-                        }
-                    ]
+                    Tags=[{"Key": "termination_date", "Value": self.prod_infra}]
                 )
                 return
             lifetime_match = self.validate_lifetime_value(lifetime)
             if not lifetime_match:
-                self.terminate_instance(ec2_instance, 'Invalid lifetime value supplied')
+                self.terminate_instance(ec2_instance, "Invalid lifetime value supplied")
                 return
             lifetime_delta = self.calculate_lifetime_delta(lifetime_match)
             future_termination_date = start + lifetime_delta
             ec2_instance.create_tags(
                 Tags=[
                     {
-                        'Key': 'termination_date',
-                        'Value': future_termination_date.isoformat()
+                        "Key": "termination_date",
+                        "Value": future_termination_date.isoformat(),
                     }
                 ]
             )
 
         # If the above while condition does not return after finding a termination_date,
         # terminate the instance and raise an exception.
-        self.terminate_instance(ec2_instance,
-                        'No termination_date found within {0} minutes of creation'.format(wait_time))
+        self.terminate_instance(
+            ec2_instance,
+            "No termination_date found within {0} minutes of creation".format(
+                self.wait_time
+            ),
+        )
 
-    def delete_resource(self, service, resource, resource_id):
+    def delete_ec2_resource(self, resource, resource_id):
         """Deletes an arbitrary AWS resource. Is currently only
         set up and being used for EC2 resources
 
@@ -119,28 +123,33 @@ class ResourceReaper(object):
             resource = resource.title()
             resource = resource[:-1]
         # Sets item to the resource we want to delete
-        item = getattr(service,resource)(resource_id)
+        item = getattr(self.service, resource)(resource_id)
         if "RouteTable" in resource:
             route_table_associations = item.associations_attribute
             for route_table_association in route_table_associations:
                 if not route_table_association.main:
-                    rta_id = route_table_association['RouteTableAssociationId']
-                    rta = service.RouteTableAssociation(rta_id)
+                    rta_id = route_table_association["RouteTableAssociationId"]
+                    rta = self.service.RouteTableAssociation(rta_id)
                     rta.delete()
         elif "NetworkACL" in resource:
             if not item.is_default:
                 item.delete()
         elif "Instance" in resource:
             item.terminate()
-            waiter = service.meta.client.get_waiter('instance_terminated')
+            waiter = self.service.meta.client.get_waiter("instance_terminated")
             waiter.wait(InstanceIds=[item.id])
         else:
             item.delete()
 
-    def delete_target_group(self, service, tg_arn):
-        service.delete_target_group(TargetGroupArn=tg_arn)
+    def delete_target_group(self, tg_arn):
+        """
+        Deletes a target_group resource
 
-    def delete_load_balancer(self, service, lb_name):
+        :param tg_arn: The amazon resource name for the target group
+        """
+        self.service.delete_target_group(TargetGroupArn=tg_arn)
+
+    def delete_load_balancer(self, lb_name):
         """
         :param lb_name: a classic load balancer name
         :param message: string explaining why the load balancer is being deleted.
@@ -149,9 +158,9 @@ class ResourceReaper(object):
         Otherwise, print out the name of the load balancer that would have been
         deleted.
         """
-        service.delete_load_balancer(LoadBalancerName=lb_name)
+        self.service.delete_load_balancer(LoadBalancerName=lb_name)
 
-    def delete_v2_load_balancer(self, service, lb_arn):
+    def delete_v2_load_balancer(self, lb_arn):
         """
         :param lb_arn: an Amazon Resource Name for a load balancer.
         :param message: string explaining why the load balancer is being deleted.
@@ -160,13 +169,13 @@ class ResourceReaper(object):
         Otherwise, print out the ARN of the load balancer that would have been
         deleted.
         """
-        service.delete_load_balancer(LoadBalancerArn=lb_arn)
+        self.service.delete_load_balancer(LoadBalancerArn=lb_arn)
 
         # Wait for the load balancer to be deleted
-        waiter = service.get_waiter('load_balancers_deleted')
+        waiter = self.service.get_waiter("load_balancers_deleted")
         waiter.wait(LoadBalancerArns=[lb_arn])
 
-    def terminate_instance(self, ec2_instance, resource):
+    def terminate_instance(self, ec2_instance, message):
         """
         :param ec2_instance: a boto3 resource representing an Amazon EC2 Instance.
         :param message: string explaining why the instance is being terminated.
@@ -174,11 +183,23 @@ class ResourceReaper(object):
         Prints a message and terminates an instance if LIVEMODE is True. Otherwise, print out
         the instance id of EC2 resource that would have been deleted.
         """
-        ec2_instance.terminate()
-        waiter = ec2_instance.meta.client.get_waiter('instance_terminated')
-        waiter.wait(InstanceIds=[ec2_instance.id])
+        output = "REAPER TERMINATION: {1} for ec2_instance_id={0}\n".format(
+            ec2_instance.id, message
+        )
+        if self.livemode:
+            output += "REAPER TERMINATION enabled: deleting instance {0}".format(
+                ec2_instance.id
+            )
+            ec2_instance.terminate()
+            waiter = self.service.meta.client.get_waiter("instance_terminated")
+            waiter.wait(InstanceIds=[ec2_instance.id])
+        else:
+            output += "REAPER TERMINATION not enabled: LIVEMODE is {0}. Would have deleted instance {1}".format(
+                self.livemode, ec2_instance.id
+            )
+        return output
 
-    def stop_instance(self, service, resource, resource_id):
+    def stop_instance(self, resource, resource_id):
         """
 
         :param ec2_instance: a boto3 resource representing an Amazon EC2 Instance.
@@ -189,7 +210,7 @@ class ResourceReaper(object):
         """
         resource = resource.title()
         resource = resource[:-1]
-        item = service.resource(resource_id)
+        item = self.service.resource(resource_id)
         item.stop()
 
     def validate_ec2_termination_date(self, ec2_instance):
@@ -199,25 +220,33 @@ class ResourceReaper(object):
         Validates that an ec2 instance has a valid termination_date in the future.
         Otherwise, delete the instance.
         """
-        termination_date = self.get_tag(ec2_instance.tags, 'termination_date')
+        termination_date = self.get_tag(ec2_instance.tags, "termination_date")
         try:
             dateutil.parser.parse(termination_date) - self.timenow_with_utc()
-        except Exception as e:
-            if e is TypeError:
-                if re.search(r'(offset-naive).+(offset-aware)', e.__str__):
-                    self.terminate_instance(ec2_instance,
-                                    'The termination_date requires a UTC offset')
+        except Exception as error:
+            if error is TypeError:
+                if re.search(r"(offset-naive).+(offset-aware)", error.__str__):
+                    output = self.terminate_instance(
+                        ec2_instance, "The termination_date requires a UTC offset"
+                    )
                 else:
-                    self.terminate_instance(ec2_instance,
-                                    'Unable to parse the termination_date')
-                return
+                    output = self.terminate_instance(
+                        ec2_instance, "Unable to parse the termination_date"
+                    )
 
-        if dateutil.parser.parse(termination_date) > self.timenow_with_utc():
-            ttl = dateutil.parser.parse(termination_date) - self.timenow_with_utc()
-            print("EC2 instance will be terminated {0} seconds from now, roughly".format(ttl.seconds))
-        else:
-            self.terminate_instance(ec2_instance,
-                            'The termination_date has passed')
+        if not output:
+            if dateutil.parser.parse(termination_date) > self.timenow_with_utc():
+                ttl = dateutil.parser.parse(termination_date) - self.timenow_with_utc()
+                print(
+                    "EC2 instance will be terminated {0} seconds from now, roughly".format(
+                        ttl.seconds
+                    )
+                )
+            else:
+                output = self.terminate_instance(
+                    ec2_instance, "The termination_date has passed"
+                )
+        return output
 
     def validate_lifetime_value(self, lifetime_value):
         """
@@ -225,7 +254,7 @@ class ResourceReaper(object):
 
         Return a match object if a match is found; otherwise, return the None from the search method.
         """
-        search_result = re.search(r'^([0-9]+)(w|d|h|m)$', lifetime_value)
+        search_result = re.search(r"^([0-9]+)(w|d|h|m)$", lifetime_value)
         if search_result is None:
             return None
         toople = search_result.groups()
@@ -242,187 +271,260 @@ class ResourceReaper(object):
         """
         length = lifetime_tuple[0]
         unit = lifetime_tuple[1]
-        if unit == 'w':
+        if unit == "w":
             return datetime.timedelta(weeks=length)
-        elif unit == 'h':
+        elif unit == "h":
             return datetime.timedelta(hours=length)
-        elif unit == 'd':
+        elif unit == "d":
             return datetime.timedelta(days=length)
-        elif unit == 'm':
+        elif unit == "m":
             return datetime.timedelta(minutes=length)
         else:
             raise ValueError("Unable to parse the unit '{0}'".format(unit))
 
-
-# This is the function that the schema_enforcer lambda should run when an instance hits
-# the pending state.
-    def enforce(self, event, context, resource, wait_time):
+    def terminate_expired_ec2_resources(self, resource):
         """
-        :param event: AWS CloudWatch event; should be a configured for when the state is pending.
-        :param context: Object to determine runtime info of the Lambda function.
+        Get's an AWS EC2 instance and deletes the instance along with
+        all resources associated with that instance if the termination_date
+        tags are expired.
+        Stops instances that don't have a valid termination_date tag
+        Put's id's of resources into lists that are printed to the console
+        for Slack notifications. Lists are for resources that have:
+            No tags or malformed tags
+            Been stopped due to missing or malformed tags (ec2 instances)
+            Been terminated due to expired termination_date tags
 
-        See http://docs.aws.amazon.com/lambda/latest/dg/python-context-object.html for more info
-        on context.
+        :param service: An AWS service, like EC2
+        :param resource: An AWS service resource, like instance or subnet
+
+        Returns:
+            Dict of lists for printing to logs
         """
-        print(event)
-        print(event['detail']['instance-id'])
-        instance = resource.Instance(id=event['detail']['instance-id'])
-        try:
-            termination_date = self.wait_for_tags(instance, wait_time)
-            if termination_date == self.prod_infra:
-                return
-            elif termination_date:
-                self.validate_ec2_termination_date(instance)
-        except:
-            # Here we should catch all exceptions, report on the state of the instance, and then
-            # bubble up the original exception.
-            instance.load()
-            warn('Instance {0} current state is {1}. This unexpected exception should be investigated!'.format(instance.id, instance.state['Name']))
-            #  TODO: add in code to alert somebody exception happened, or remove
-            # this comment if cloudwatch starts watching for exceptions from
-            # this lambda
-            raise
 
-        print('Schema successfully enforced.')
-
-    def terminate_expired_ec2_resources(self, service, resource, livemode):
+        # Lists of resource IDs
         improperly_tagged = []
         deleted = []
         stopped = []
-        if 'instances' in resource:
-            resources = getattr(service,resource).filter(
-                Filters=[{'Name': 'instance-state-name', 'Values': ['running']}])
-        elif 'target_groups' in resource:
-            target_groups = service.describe_target_groups()
-            resources = target_groups['TargetGroups']
+
+        # If statement to get resource ID's based on resource given.
+        # Instances portion gets only running instance IDs
+        if "instances" in resource:
+            resources = getattr(self.service, resource).filter(
+                Filters=[{"Name": "instance-state-name", "Values": ["running"]}]
+            )
         else:
-            resources = getattr(service,resource).all()
+            resources = getattr(self.service, resource).all()
+        # Get termination date tag for the resource given
         for item in resources:
-            if 'target_groups' in resource:
-                resource_id = item['TargetGroupArn']
-                tags = service.describe_tags(ResourceArns=[resource_id])
-                tag_descriptions = tags['TagDescriptions']
-                tag_array = tag_descriptions[0]['Tags']
-                termination_date = self.get_tag(tag_array, 'termination_date')
-            elif 'network_interfaces' in resource:
+            if "network_interfaces" in resource:
                 resource_id = item.id
-                termination_date = self.get_tag(item.tag_set, 'termination_date')
+                termination_date = self.get_tag(item.tag_set, "termination_date")
             else:
                 resource_id = item.id
-                termination_date = self.get_tag(item.tags, 'termination_date')
+                termination_date = self.get_tag(item.tags, "termination_date")
 
+            # If termination date is None, add ID to improperly tagged list,
+            # if resource is ec2 instance stop it
             if termination_date is None:
                 improperly_tagged.append(resource_id)
-                if 'instances' in resource:
+                if "instances" in resource:
                     stopped.append(resource_id)
-                    if livemode:
-                        self.stop_instance(service, resource, resource_id)
+                    if self.livemode:
+                        self.stop_instance(resource, resource_id)
                 continue
 
+            # Checks termination_date tag to see if resource is expired
+            # Deletes resource if it's termination_date tag is expired,
+            # if not then prints time in seconds until expiration
             if termination_date != self.prod_infra:
                 try:
-                    if dateutil.parser.parse(termination_date) > self.timenow_with_utc():
-                        ttl = dateutil.parser.parse(termination_date) - self.timenow_with_utc()
-                        print("{0} {1} will be deleted {2} seconds from now, roughly".format(resource, resource_id, ttl.seconds))
+                    if (
+                        dateutil.parser.parse(termination_date)
+                        > self.timenow_with_utc()
+                    ):
+                        ttl = (
+                            dateutil.parser.parse(termination_date)
+                            - self.timenow_with_utc()
+                        )
+                        print(
+                            "{0} {1} will be deleted {2} seconds from now, roughly".format(
+                                resource, resource_id, ttl.seconds
+                            )
+                        )
                     else:
-                        if livemode:
-                            self.delete_resource(service, resource, resource_id)
+                        if self.livemode:
+                            self.delete_ec2_resource(resource, resource_id)
                         deleted.append(resource_id)
-                except:
-                    print("Unable to parse the termination_date {0} for {1} {2}".format(termination_date, resource, resource_id))
+                except ValueError:
+                    print(
+                        "Unable to parse the termination_date {0} for {1} {2}".format(
+                            termination_date, resource, resource_id
+                        )
+                    )
                     continue
             else:
                 continue
+        # Dict of lists returned for logging
         resource_data = {
-            'deleted': deleted,
-            'improperly_tagged': improperly_tagged,
-            'stopped': stopped
+            "deleted": deleted,
+            "improperly_tagged": improperly_tagged,
+            "stopped": stopped,
         }
         return resource_data
 
-    def terminate_expired_load_balancers(self, service, livemode):
+    def terminate_expired_load_balancers(self):
+        """
+        Gets AWS classic and v2 Elastic Load Balancers from AWS
+        and terminates them if they have expired termination_date tags
+
+        Put's id's of resources into lists that are printed to the console
+        for Slack notifications. Lists are for resources that have:
+            No tags or malformed tags
+            Been stopped due to missing or malformed tags (ec2 instances)
+            Been terminated due to expired termination_date tags
+
+        Returns:
+            Dict of lists for printing to logs
+        """
+
+        # Lists of resource IDs
         improperly_tagged = []
         deleted_load_balancers = []
 
-        load_balancers = service.describe_load_balancers()
+        load_balancers = self.service.describe_load_balancers()
 
-        if 'elbv2' in service:
-            load_balancer_info = load_balancers['LoadBalancerDescriptions']
+        # Checks whether or not service is elb or elbv2
+        if "v2" in str(self.service):
+            load_balancer_info = load_balancers["LoadBalancers"]
         else:
-            load_balancer_info = load_balancers['LoadBalancers']
+            load_balancer_info = load_balancers["LoadBalancerDescriptions"]
+
+        # Gets termination_date tags for load balancers
         for load_balancer in load_balancer_info:
-            if 'elbv2' in service:
-                lb_name = load_balancer['LoadBalancerArn']
-                tags = service.describe_tags(ResourceArns=[lb_arn])
+            if "v2" in str(self.service):
+                lb_name = load_balancer["LoadBalancerArn"]
+                tags = self.service.describe_tags(ResourceArns=[lb_name])
             else:
-                lb_name = load_balancer['LoadBalancerName']
-                tags = service.describe_tags(LoadBalancerNames=[lb_name])
-            tag_descriptions = tags['TagDescriptions']
-            tag_array = tag_descriptions[0]['Tags']
-            termination_date = self.get_tag(tag_array, 'termination_date')
+                lb_name = load_balancer["LoadBalancerName"]
+                tags = self.service.describe_tags(LoadBalancerNames=[lb_name])
+            tag_descriptions = tags["TagDescriptions"]
+            tag_array = tag_descriptions[0]["Tags"]
+            termination_date = self.get_tag(tag_array, "termination_date")
 
             if termination_date is None:
                 improperly_tagged.append(lb_name)
                 continue
 
+            # Checks termination_date tag to see if it's expired, if it
+            # is then deletes load balancer.
             if termination_date != self.prod_infra:
                 try:
-                    if dateutil.parser.parse(termination_date) > self.timenow_with_utc():
-                        ttl = dateutil.parser.parse(termination_date) - self.timenow_with_utc()
-                        print("Load balancer {0} will be deleted {1} seconds from now, roughly".format(lb_name, ttl.seconds))
+                    if (
+                        dateutil.parser.parse(termination_date)
+                        > self.timenow_with_utc()
+                    ):
+                        ttl = (
+                            dateutil.parser.parse(termination_date)
+                            - self.timenow_with_utc()
+                        )
+                        print(
+                            "Load balancer {0} will be deleted {1} seconds from now, roughly".format(
+                                lb_name, ttl.seconds
+                            )
+                        )
                     else:
-                        if 'elbv2' in service:
-                            if livemode:
-                                self.delete_v2_load_balancer(service, lb_name)
+                        if "v2" in str(self.service):
+                            if self.livemode:
+                                self.delete_v2_load_balancer(lb_name)
                         else:
-                            if livemode:
-                                self.delete_load_balancer(service, lb_name)
+                            if self.livemode:
+                                self.delete_load_balancer(lb_name)
                         deleted_load_balancers.append(lb_name)
-                except:
-                    print("Unable to parse the termination_date {1} for load balancer {0}".format(lb_name, termination_date))
+                except ValueError:
+                    print(
+                        "Unable to parse the termination_date {1} for load balancer {0}".format(
+                            lb_name, termination_date
+                        )
+                    )
                     continue
             else:
                 continue
         elb_info = {
-            'deleted': deleted_load_balancers,
-            'improperly_tagged': improperly_tagged
+            "deleted": deleted_load_balancers,
+            "improperly_tagged": improperly_tagged,
         }
         return elb_info
 
-    def terminate_expired_target_groups(self, service, livemode):
+    def terminate_expired_target_groups(self):
+        """
+        Gets AWS Target Groups from AWS and terminates them if they have
+        expired termination_date tags
+
+        Put's id's of resources into lists that are printed to the console
+        for Slack notifications. Lists are for resources that have:
+            No tags or malformed tags
+            Been stopped due to missing or malformed tags (ec2 instances)
+            Been terminated due to expired termination_date tags
+
+        :param service: An AWS service, like ELB
+        :param livemode: Whether or not the reaper should delete resources
+
+        Returns:
+            Dict of lists for printing to logs
+        """
+
+        # Lists of resource IDs
         improperly_tagged = []
         deleted_target_groups = []
 
         # Get the target groups that will be deleted after the load balancer
-        target_groups = service.describe_target_groups()
-        target_groups_array = target_groups['TargetGroups']
+        target_groups = self.service.describe_target_groups()
+        target_groups_array = target_groups["TargetGroups"]
+
+        # Get the termination_date tags for target groups
         for target_group in target_groups_array:
-            tg_arn = target_group['TargetGroupArn']
-            tags = service.describe_tags(ResourceArns=[tg_arn])
-            tag_descriptions = tags['TagDescriptions']
-            tag_array = tag_descriptions[0]['Tags']
-            termination_date = self.get_tag(tag_array, 'termination_date')
+            tg_arn = target_group["TargetGroupArn"]
+            tags = self.service.describe_tags(ResourceArns=[tg_arn])
+            tag_descriptions = tags["TagDescriptions"]
+            tag_array = tag_descriptions[0]["Tags"]
+            termination_date = self.get_tag(tag_array, "termination_date")
 
             if termination_date is None:
                 improperly_tagged.append(tg_arn)
                 continue
 
+            # Checks termination_date tag to see if it's expired, if it
+            # is then deletes target group
             if termination_date != self.prod_infra:
                 try:
-                    if dateutil.parser.parse(termination_date) > self.timenow_with_utc():
-                        ttl = dateutil.parser.parse(termination_date) - self.timenow_with_utc()
-                        print("Target group {0} will be deleted {1} seconds from now, roughly".format(tg_arn, ttl.seconds))
+                    if (
+                        dateutil.parser.parse(termination_date)
+                        > self.timenow_with_utc()
+                    ):
+                        ttl = (
+                            dateutil.parser.parse(termination_date)
+                            - self.timenow_with_utc()
+                        )
+                        print(
+                            "Target group {0} will be deleted {1} seconds from now, roughly".format(
+                                tg_arn, ttl.seconds
+                            )
+                        )
                     else:
-                        if livemode:
-                            self.delete_target_group(service, tg_arn)
+                        if self.livemode:
+                            self.delete_target_group(tg_arn)
                         deleted_target_groups.append(tg_arn)
-                except:
-                    print("Unable to parse the termination_date {1} for target group {0}".format(tg_arn, termination_date))
+                except ValueError:
+                    print(
+                        "Unable to parse the termination_date {1} for target group {0}".format(
+                            tg_arn, termination_date
+                        )
+                    )
                     continue
             else:
                 continue
         target_group_info = {
-            'deleted': deleted_target_groups,
-            'improperly_tagged': improperly_tagged
+            "deleted": deleted_target_groups,
+            "improperly_tagged": improperly_tagged,
         }
         return target_group_info
