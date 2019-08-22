@@ -6,9 +6,6 @@ import boto3
 
 from reaper_class import ResourceReaper
 
-# List of AWS services to manage
-SERVICES = ["elb", "elbv2", "ec2"]
-
 # Terminator messages to be printed to the console, then sent to Slack
 LIVE_TERMINATION_MESSAGE = (
     "REAPER TERMINATED {0} with ids {1} due to expired termination_date tags"
@@ -74,7 +71,7 @@ def enforce(event, context, livemode):
 
 
 # Loops through services list to pass each to the reaper class
-def resource_reaper(services):
+def resource_reaper():
     """
     Loops through services listed in the SERVICES list and checks for
     termination dates for resources being used in those services. If
@@ -87,6 +84,9 @@ def resource_reaper(services):
     Returns
         None
     """
+    # List of AWS services to manage
+    services = ["elb", "elbv2", "ec2"]
+
     for service in services:
         if service != "ec2":
             boto_resource = boto3.client(
