@@ -22,7 +22,7 @@ NOOP_STOPPED = (
 IMPROPER_TAGS = "REAPER FOUND {0} with ids {1} are missing termination_date tags!"
 
 # Whether or not the reaper should actually delete resources
-LIVEMODE = False
+LIVEMODE = determine_live_mode()
 
 # Determines whether or not LIVEMODE is true based on environment variable in AWS lambda
 def determine_live_mode():
@@ -38,7 +38,7 @@ def determine_live_mode():
 
 # This is the function that the schema_enforcer lambda should run when an instance hits
 # the pending state.
-def enforce(event, context, livemode):
+def enforce(event, context):
     """
     :param event: AWS CloudWatch event; should be a configured for when the state is pending.
     :param context: Object to determine runtime info of the Lambda function.
@@ -50,7 +50,7 @@ def enforce(event, context, livemode):
     print(event)
     print(event["detail"]["instance-id"])
     instance = ec2.Instance(id=event["detail"]["instance-id"])
-    reaper = ResourceReaper(service=ec2, livemode=livemode)
+    reaper = ResourceReaper(service=ec2, livemode=LIVEMODE)
     try:
         termination_date = reaper.wait_for_tags(instance)
         if termination_date:
@@ -72,6 +72,7 @@ def enforce(event, context, livemode):
 
 # Loops through services list to pass each to the reaper class
 def resource_reaper():
+    # TODO: consider breaking this function up into smaller functions, one per service
     """
     Loops through services listed in the SERVICES list and checks for
     termination dates for resources being used in those services. If
@@ -94,7 +95,7 @@ def resource_reaper():
                 # Variables below for local testing
                 # aws_access_key_id=,
                 # aws_secret_access_key=,
-                # region_name="us-west-2",
+                # region_name=,
             )
             reaper = ResourceReaper(service=boto_resource, livemode=LIVEMODE)
             items = reaper.terminate_expired_load_balancers()
@@ -136,7 +137,7 @@ def resource_reaper():
                 # Variables below for local testing
                 # aws_access_key_id=,
                 # aws_secret_access_key=,
-                # region_name="us-west-2",
+                # region_name=,
             )
             reaper = ResourceReaper(service=boto_resource, livemode=LIVEMODE)
             # EC2 resources to be deleted by the reaper
@@ -149,6 +150,8 @@ def resource_reaper():
                 "security_groups",
                 "subnets",
                 "vpcs",
+                "volumes",
+                "snapshots",
             ]
             # Loops through the resources list to delete resources attached to EC2 instances
             for resource in resources:

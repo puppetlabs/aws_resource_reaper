@@ -7,13 +7,18 @@ import dateutil
 class ResourceReaper:
     """A class for managing AWS resources that need
     automatically deprovisioned.
+
+    :param service: The AWS service that needs managed
+    :param livemode: Whether or not resources should actually be deleted
+    :param wait_time: Time to wait for tags to populate for EC2 instances
+    :param prod_infra: Tag for resources that should never expire
     """
 
     def __init__(self, service, livemode):
         self.service = service
         self.livemode = livemode
         self.wait_time = 4
-        self.prod_infra = "prod_infra"
+        self.prod_infra = "indefinite"
 
     def get_tag(self, tag_array, tag_name):
         """
@@ -357,7 +362,7 @@ class ResourceReaper:
                         deleted.append(resource_id)
                 except ValueError:
                     print(
-                        "Unable to parse the termination_date {0} for {1} {2}".format(
+                        "Unable to parse the termination_date '{0}' for {1} {2}".format(
                             termination_date, resource, resource_id
                         )
                     )
@@ -442,7 +447,7 @@ class ResourceReaper:
                         deleted_load_balancers.append(lb_name)
                 except ValueError:
                     print(
-                        "Unable to parse the termination_date {1} for load balancer {0}".format(
+                        "Unable to parse the termination_date '{1}' for load balancer {0}".format(
                             lb_name, termination_date
                         )
                     )
@@ -516,7 +521,7 @@ class ResourceReaper:
                         deleted_target_groups.append(tg_arn)
                 except ValueError:
                     print(
-                        "Unable to parse the termination_date {1} for target group {0}".format(
+                        "Unable to parse the termination_date '{1}' for target group {0}".format(
                             tg_arn, termination_date
                         )
                     )

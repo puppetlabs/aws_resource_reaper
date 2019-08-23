@@ -45,12 +45,12 @@ Resources:
       Code:
         S3Key: reaper.zip
         S3Bucket: !Sub "${S3BucketPrefix}-${AWS::Region}"
-      Handler: reaper.terminate_expired_instances
+      Handler: reaper.resource_reaper
       Environment:
         Variables:
           LIVEMODE: !Ref LIVEMODE
-      Timeout: 300
-      Runtime: python2.7
+      Timeout: 900
+      Runtime: python3.6
       Role: !GetAtt ReaperRole.Arn
     DependsOn: ReaperRole
 
@@ -83,8 +83,8 @@ Resources:
       Environment:
         Variables:
           LIVEMODE: !Ref LIVEMODE
-      Timeout: 300
-      Runtime: python2.7
+      Timeout: 900
+      Runtime: python3.6
       Role: !GetAtt ReaperRole.Arn
     DependsOn: ReaperRole
 
@@ -139,8 +139,8 @@ Resources:
         S3Key: slack_notifier.zip
         S3Bucket: !Sub "${S3BucketPrefix}-${AWS::Region}"
       Handler: slack_notifier.post
-      Timeout: 300
-      Runtime: python2.7
+      Timeout: 900
+      Runtime: python3.6
       Role: !GetAtt ReaperRole.Arn
       Environment:
         Variables:
