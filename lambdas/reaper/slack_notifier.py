@@ -4,7 +4,7 @@ import ast
 import zlib
 import base64
 import os
-from urllib2 import Request, urlopen
+from urllib.request import urlopen, Request
 import boto3
 
 
@@ -44,7 +44,7 @@ def process_subscription_notification(event):
     """
     zipped = base64.standard_b64decode(event["awslogs"]["data"])
     unzipped_string = zlib.decompress(zipped, 16 + zlib.MAX_WBITS)
-    event_dict = ast.literal_eval(unzipped_string)
+    event_dict = ast.literal_eval(unzipped_string.decode())
     return event_dict
 
 
@@ -122,11 +122,12 @@ def post(event, context):
                 ]
             }
         )
+        datastr = datastr.encode()
         request = Request(webhook, headers=headers, data=datastr)
         uopen = urlopen(request)
-        rawresponse = "".join(uopen)
+        # rawresponse = "".join(uopen.data)
         uopen.close()
         assert uopen.code == 200
         if uopen.code != 200:
-            print(rawresponse)
+            print("Failed to post notification!")
     return "Success"

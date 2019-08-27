@@ -1,5 +1,3 @@
-from __future__ import print_function
-
 import re
 import os
 import boto3
@@ -21,9 +19,6 @@ NOOP_STOPPED = (
 )
 IMPROPER_TAGS = "REAPER FOUND {0} with ids {1} are missing termination_date tags!"
 
-# Whether or not the reaper should actually delete resources
-LIVEMODE = determine_live_mode()
-
 # Determines whether or not LIVEMODE is true based on environment variable in AWS lambda
 def determine_live_mode():
     """
@@ -35,12 +30,14 @@ def determine_live_mode():
     else:
         return False
 
+# Whether or not the reaper should actually delete resources
+LIVEMODE = determine_live_mode()
 
 # This is the function that the schema_enforcer lambda should run when an instance hits
 # the pending state.
 def enforce(event, context):
     """
-    :param event: AWS CloudWatch event; should be a configured for when the state is pending.
+    :param event: AWS CloudWatch event; should be configured for when the state is pending.
     :param context: Object to determine runtime info of the Lambda function.
 
     See http://docs.aws.amazon.com/lambda/latest/dg/python-context-object.html for more info
@@ -55,23 +52,23 @@ def enforce(event, context):
         termination_date = reaper.wait_for_tags(instance)
         if termination_date:
             output = reaper.validate_ec2_termination_date(instance)
+            print(output)
     except:
         # Here we should catch all exceptions, report on the state of the instance, and then
         # bubble up the original exception.
         instance.load()
-        print(
-            "Instance {0} current state is {1}. This unexpected exception should be investigated!".format(
-                instance.id, instance.state["Name"]
+        if instance.state["Name"] != "pending":
+            print(
+                "Instance {0} current state is {1}. This unexpected exception should be investigated!".format(
+                    instance.id, instance.state["Name"]
+                )
             )
-        )
         raise
 
     print("Schema successfully enforced.\n")
-    print(output)
-
 
 # Loops through services list to pass each to the reaper class
-def resource_reaper():
+def resource_reaper(event, context):
     # TODO: consider breaking this function up into smaller functions, one per service
     """
     Loops through services listed in the SERVICES list and checks for

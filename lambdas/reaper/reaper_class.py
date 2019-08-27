@@ -37,6 +37,7 @@ class ResourceReaper:
             for tag in tag_array:
                 if tag["Key"] == tag_name:
                     output = tag["Value"]
+                    break
                 else:
                     output = None
         return output
@@ -77,7 +78,6 @@ class ResourceReaper:
                 print("No 'lifetime' tag found; sleeping for 15s")
                 time.sleep(15)
                 continue
-            print("lifetime tag found")
             if lifetime == self.prod_infra:
                 ec2_instance.create_tags(
                     Tags=[{"Key": "termination_date", "Value": self.prod_infra}]
@@ -85,7 +85,8 @@ class ResourceReaper:
                 return
             lifetime_match = self.validate_lifetime_value(lifetime)
             if not lifetime_match:
-                self.terminate_instance(ec2_instance, "Invalid lifetime value supplied")
+                output = self.terminate_instance(ec2_instance, "Invalid lifetime value supplied")
+                print(output)
                 return
             lifetime_delta = self.calculate_lifetime_delta(lifetime_match)
             future_termination_date = start + lifetime_delta
@@ -97,15 +98,38 @@ class ResourceReaper:
                     }
                 ]
             )
+            print("'termination_date' tag created!")
+            return
 
         # If the above while condition does not return after finding a termination_date,
         # terminate the instance and raise an exception.
-        self.terminate_instance(
+        output = self.terminate_instance(
             ec2_instance,
             "No termination_date found within {0} minutes of creation".format(
                 self.wait_time
             ),
         )
+        print(output)
+
+    def adjust_resource_string(self, resource):
+        """
+        Resources get passed through in snake case, need converted to camel
+        case for use as attributes by the boto3 library
+
+        :param resource: An aws resource like an internet_gateway
+
+        Returns:
+            String with correct camel casing
+        """
+        if "_" in resource:
+            resource_string = resource.replace("_", " ")
+            resource_string = resource.title()
+            resource_string = resource.replace(" ", "")
+            resource_string = resource[:-1]
+        else:
+            resource_string = resource.title()
+            resource_string = resource[:-1]
+        return resource_string
 
     def delete_ec2_resource(self, resource, resource_id):
         """Deletes an arbitrary AWS resource. Is currently only
@@ -117,16 +141,7 @@ class ResourceReaper:
 
         Returns None
         """
-        # Resources get passed through in snake case, need converted to camel
-        # case for use as attributes
-        if "_" in resource:
-            resource = resource.replace("_", " ")
-            resource = resource.title()
-            resource = resource.replace(" ", "")
-            resource = resource[:-1]
-        else:
-            resource = resource.title()
-            resource = resource[:-1]
+        resource = self.adjust_resource_string(resource)
         # Sets item to the resource we want to delete
         item = getattr(self.service, resource)(resource_id)
         if "RouteTable" in resource:
@@ -143,6 +158,13 @@ class ResourceReaper:
             item.terminate()
             waiter = self.service.meta.client.get_waiter("instance_terminated")
             waiter.wait(InstanceIds=[item.id])
+        elif "InternetGateway" in resource:
+            item = getattr(self.service, resource)(resource_id)
+            attachments = item.attachments
+            vpcs_to_detach = [vpc['VpcId'] for vpc in attachments]
+            for vpc in vpcs_to_detach:
+                item.detach_from_vpc(VpcId=vpc)
+            item.delete()
         else:
             item.delete()
 
@@ -215,7 +237,7 @@ class ResourceReaper:
         """
         resource = resource.title()
         resource = resource[:-1]
-        item = self.service.resource(resource_id)
+        item = getattr(self.service,resource)(resource_id)
         item.stop()
 
     def validate_ec2_termination_date(self, ec2_instance):
@@ -225,6 +247,7 @@ class ResourceReaper:
         Validates that an ec2 instance has a valid termination_date in the future.
         Otherwise, delete the instance.
         """
+        output = None
         termination_date = self.get_tag(ec2_instance.tags, "termination_date")
         try:
             dateutil.parser.parse(termination_date) - self.timenow_with_utc()
@@ -242,7 +265,7 @@ class ResourceReaper:
         if not output:
             if dateutil.parser.parse(termination_date) > self.timenow_with_utc():
                 ttl = dateutil.parser.parse(termination_date) - self.timenow_with_utc()
-                print(
+                output = (
                     "EC2 instance will be terminated {0} seconds from now, roughly".format(
                         ttl.seconds
                     )

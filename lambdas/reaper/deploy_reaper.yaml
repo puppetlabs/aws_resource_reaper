@@ -50,7 +50,7 @@ Resources:
         Variables:
           LIVEMODE: !Ref LIVEMODE
       Timeout: 900
-      Runtime: python3.6
+      Runtime: python3.7
       Role: !GetAtt ReaperRole.Arn
     DependsOn: ReaperRole
 
@@ -84,7 +84,7 @@ Resources:
         Variables:
           LIVEMODE: !Ref LIVEMODE
       Timeout: 900
-      Runtime: python3.6
+      Runtime: python3.7
       Role: !GetAtt ReaperRole.Arn
     DependsOn: ReaperRole
 
@@ -140,7 +140,7 @@ Resources:
         S3Bucket: !Sub "${S3BucketPrefix}-${AWS::Region}"
       Handler: slack_notifier.post
       Timeout: 900
-      Runtime: python3.6
+      Runtime: python3.7
       Role: !GetAtt ReaperRole.Arn
       Environment:
         Variables:
@@ -159,7 +159,7 @@ Resources:
     Type: AWS::Logs::SubscriptionFilter
     Properties:
       DestinationArn: !GetAtt LambdaSlackNotifier.Arn
-      FilterPattern: REAPER TERMINATION
+      FilterPattern: REAPER
       LogGroupName: !Ref LambdaTerminatorLogGroup
     DependsOn: TerminatorSlackNotifierPermission
 
