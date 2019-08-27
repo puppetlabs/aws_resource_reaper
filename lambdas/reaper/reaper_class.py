@@ -123,12 +123,12 @@ class ResourceReaper:
         """
         if "_" in resource:
             resource_string = resource.replace("_", " ")
-            resource_string = resource.title()
-            resource_string = resource.replace(" ", "")
-            resource_string = resource[:-1]
+            resource_string = resource_string.title()
+            resource_string = resource_string.replace(" ", "")
+            resource_string = resource_string[:-1]
         else:
             resource_string = resource.title()
-            resource_string = resource[:-1]
+            resource_string = resource_string[:-1]
         return resource_string
 
     def delete_ec2_resource(self, resource, resource_id):
