@@ -147,17 +147,24 @@ class ResourceReaper:
         if "RouteTable" in resource:
             route_table_associations = item.associations_attribute
             for route_table_association in route_table_associations:
-                if not route_table_association.main:
+                if route_table_association == []:
+                    item.delete()
+                    return "Success"
+                elif not route_table_association['Main']:
                     rta_id = route_table_association["RouteTableAssociationId"]
                     rta = self.service.RouteTableAssociation(rta_id)
                     rta.delete()
-        elif "NetworkACL" in resource:
+                    item.delete()
+                    return "Success"
+        elif "NetworkAcl" in resource:
             if not item.is_default:
                 item.delete()
+                return "Success"
         elif "Instance" in resource:
             item.terminate()
             waiter = self.service.meta.client.get_waiter("instance_terminated")
             waiter.wait(InstanceIds=[item.id])
+            return "Success"
         elif "InternetGateway" in resource:
             item = getattr(self.service, resource)(resource_id)
             attachments = item.attachments
@@ -165,8 +172,10 @@ class ResourceReaper:
             for vpc in vpcs_to_detach:
                 item.detach_from_vpc(VpcId=vpc)
             item.delete()
+            return "Success"
         else:
             item.delete()
+            return "Success"
 
     def delete_target_group(self, tg_arn):
         """
@@ -381,8 +390,15 @@ class ResourceReaper:
                         )
                     else:
                         if self.livemode:
-                            self.delete_ec2_resource(resource, resource_id)
-                        deleted.append(resource_id)
+                            is_deleted = None
+                            try:
+                                is_deleted = self.delete_ec2_resource(resource, resource_id)
+                            except Exception as e:
+                                print(f"Resource deletion failed due to exception: {e}")
+                            if is_deleted:
+                                deleted.append(resource_id)
+                        else:
+                            deleted.append(resource_id)
                 except ValueError:
                     print(
                         "Unable to parse the termination_date '{0}' for {1} {2}".format(

@@ -31,7 +31,7 @@ def determine_live_mode():
         return False
 
 # Whether or not the reaper should actually delete resources
-LIVEMODE = determine_live_mode()
+LIVEMODE = True #determine_live_mode()
 
 # This is the function that the schema_enforcer lambda should run when an instance hits
 # the pending state.
@@ -90,9 +90,9 @@ def resource_reaper(event, context):
             boto_resource = boto3.client(
                 service,
                 # Variables below for local testing
-                # aws_access_key_id=,
-                # aws_secret_access_key=,
-                # region_name=,
+                # aws_access_key_id=access_key,
+                # aws_secret_access_key=secret_key,
+                # region_name=region,
             )
             reaper = ResourceReaper(service=boto_resource, livemode=LIVEMODE)
             items = reaper.terminate_expired_load_balancers()
@@ -132,9 +132,9 @@ def resource_reaper(event, context):
             boto_resource = boto3.resource(
                 service,
                 # Variables below for local testing
-                # aws_access_key_id=,
-                # aws_secret_access_key=,
-                # region_name=,
+                # aws_access_key_id=access_key,
+                # aws_secret_access_key=secret_key,
+                # region_name=region,
             )
             reaper = ResourceReaper(service=boto_resource, livemode=LIVEMODE)
             # EC2 resources to be deleted by the reaper
@@ -144,8 +144,8 @@ def resource_reaper(event, context):
                 "route_tables",
                 "network_acls",
                 "network_interfaces",
-                "security_groups",
                 "subnets",
+                "security_groups",
                 "vpcs",
                 "volumes",
                 "snapshots",
