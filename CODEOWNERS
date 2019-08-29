@@ -1,0 +1,5 @@
+# This will cause the puppetlabs/it-services group to be assigned
+# review of any opened PRs against the branches containing this file.
+
+*  @puppetlabs/it-services
+lambdas/* @ShawonC
