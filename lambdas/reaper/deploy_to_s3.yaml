@@ -12,6 +12,11 @@ Parameters:
     Default: reaper.zip
     Description: Key for the reaper.zip file in the S3 bucket.
 
+  OriginalReaperClassZip:
+    Type: String
+    Default: reaper_class.zip
+    Description: Key for the reaper_class.zip file in the S3 bucket.
+
   OriginalSlackNotifierZip:
     Type: String
     Default: slack_notifier.zip
@@ -98,6 +103,13 @@ Resources:
                         event['ResourceProperties']['OrigReaperKey'])
                     s3.ObjectAcl(event['ResourceProperties']['NewBucket'],
                         event['ResourceProperties']['OrigReaperKey']).put(ACL='public-read')
+                    copy_reaper_class = {'Bucket': event['ResourceProperties']['OrigBucketName'],
+                        'Key': event['ResourceProperties']['OrigReaperClassKey']}
+                    s3.meta.client.copy(copy_source,
+                        event['ResourceProperties']['NewBucket'],
+                        event['ResourceProperties']['OrigReaperClassKey'])
+                    s3.ObjectAcl(event['ResourceProperties']['NewBucket'],
+                        event['ResourceProperties']['OrigReaperClassKey']).put(ACL='public-read')
                     slack_notifier_copy_source = {'Bucket': event['ResourceProperties']['OrigBucketName'],
                         'Key': event['ResourceProperties']['OrigSlackNotifierKey']}
                     s3.meta.client.copy(slack_notifier_copy_source,
@@ -142,7 +154,7 @@ Resources:
                     return False
       Handler: index.handler
       Role: !GetAtt S3CopierRole.Arn
-      Runtime: python2.7
+      Runtime: python3.7
     Type: "AWS::Lambda::Function"
 
   S3CopierLambdaTrigger:
@@ -151,5 +163,6 @@ Resources:
       ServiceToken: !GetAtt S3CopierLambda.Arn
       OrigBucketName: !Ref OriginalS3Bucket
       OrigReaperKey: !Ref OriginalReaperZip
+      OrigReaperClassKey: !Ref OriginalReaperClassZip
       OrigSlackNotifierKey: !Ref OriginalSlackNotifierZip
       NewBucket: !Ref S3Bucket
