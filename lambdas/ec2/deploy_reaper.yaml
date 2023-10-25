@@ -51,7 +51,7 @@ Resources:
         Variables:
           LIVEMODE: !Ref LIVEMODE
       Timeout: 300
-      Runtime: python2.7
+      Runtime: python3.9
       Role: !GetAtt ReaperRole.Arn
     DependsOn: ReaperRole
 
@@ -85,7 +85,7 @@ Resources:
         Variables:
           LIVEMODE: !Ref LIVEMODE
       Timeout: 300
-      Runtime: python2.7
+      Runtime: python3.9
       Role: !GetAtt ReaperRole.Arn
     DependsOn: ReaperRole
 
@@ -141,7 +141,7 @@ Resources:
         S3Bucket: !Sub "${S3BucketPrefix}-${AWS::Region}"
       Handler: slack_notifier.post
       Timeout: 300
-      Runtime: python2.7
+      Runtime: python3.9
       Role: !GetAtt ReaperRole.Arn
       Environment:
         Variables:
