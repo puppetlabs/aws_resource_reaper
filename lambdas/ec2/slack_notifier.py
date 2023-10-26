@@ -5,7 +5,7 @@ import ast
 import zlib
 import base64
 import os
-from urllib2 import Request, urlopen
+from urllib.request import Request, urlopen
 
 RED_ALERTS = [
     'The following instances have been stopped due to unparsable or missing termination_date tags:'
