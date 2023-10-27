@@ -53,7 +53,7 @@ def process_subscription_notification(event):
     """
     zipped = base64.standard_b64decode(event['awslogs']['data'])
     unzipped_string = zlib.decompress(zipped, 16+zlib.MAX_WBITS)
-    event_dict = ast.literal_eval(unzipped_string)
+    event_dict = ast.literal_eval(unzipped_string.decode('utf-8'))
     return event_dict
 
 def is_red_alert(message):
