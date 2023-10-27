@@ -111,7 +111,9 @@ def post(event, context):
                     'text': message
                 }
             ]})
+        datastr = datastr.encode('utf-8')
         request = Request(WEBHOOK, headers=headers, data=datastr)
+        request.add_header('Content-Length', len(datastr))
         uopen = urlopen(request)
         rawresponse = ''.join(uopen)
         uopen.close()
