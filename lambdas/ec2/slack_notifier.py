@@ -115,7 +115,6 @@ def post(event, context):
         request = Request(WEBHOOK, headers=headers, data=datastr)
         request.add_header('Content-Length', len(datastr))
         uopen = urlopen(request)
-        rawresponse = ''.join(uopen)
         uopen.close()
         assert uopen.code == 200
     return "Success"
