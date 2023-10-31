@@ -56,30 +56,6 @@ def process_subscription_notification(event):
     event_dict = ast.literal_eval(unzipped_string.decode('utf-8'))
     return event_dict
 
-def is_red_alert(message):
-    for alert in RED_ALERTS:
-        if alert in message:
-            return True
-
-def determine_message_color(event, message):
-    """
-    :param event: the decompressed AWS Log event.
-    :param message: string of the message to send to Slack.
-
-    Set terminator messages to green, and set the enforcer
-    messages to the yellow. If the message has a non enforcer
-    or terminator message set color to red
-    """
-    red = '#ff0000'
-    green = '#33cc33'
-    yellow = '#ffff00'
-    if is_red_alert(message):
-        return red
-    elif 'Terminator' in event['logGroup']:
-        return green
-    else:
-        return yellow
-
 def post(event, context):
     """
     :param event: AWS Log Event.
@@ -87,7 +63,7 @@ def post(event, context):
 
     See http://docs.aws.amazon.com/lambda/latest/dg/python-context-object.html for more info
     on context.
-    Process an AWS Log event and post it to a Slack Channel.
+    Process an AWS Log event and post it to a Slack channel via workflow.
     """
 
     WEBHOOK = read_webhook()
@@ -103,14 +79,10 @@ def post(event, context):
         headers = {
             "content-type": "application/json"}
         datastr = json.dumps({
-            'attachments': [
-                {
-                    'color': determine_message_color(event_processed, message),
-                    'pretext': get_account_alias(),
-                    'author_name': determine_region(),
-                    'text': message
-                }
-            ]})
+            "account": get_account_alias(),
+            "message": message,
+            "region": determine_region()
+        })
         datastr = datastr.encode('utf-8')
         request = Request(WEBHOOK, headers=headers, data=datastr)
         request.add_header('Content-Length', len(datastr))
