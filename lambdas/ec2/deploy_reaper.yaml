@@ -35,7 +35,8 @@ Resources:
                 - "sts:AssumeRole"
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AmazonEC2FullAccess
-        - arn:aws:iam::aws:policy/AWSLambdaFullAccess
+        - arn:aws:iam::aws:policy/AWSLambda_FullAccess
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
         - arn:aws:iam::aws:policy/IAMReadOnlyAccess
         - arn:aws:iam::aws:policy/CloudWatchActionsEC2Access
 
@@ -50,7 +51,7 @@ Resources:
         Variables:
           LIVEMODE: !Ref LIVEMODE
       Timeout: 300
-      Runtime: python2.7
+      Runtime: python3.9
       Role: !GetAtt ReaperRole.Arn
     DependsOn: ReaperRole
 
@@ -84,7 +85,7 @@ Resources:
         Variables:
           LIVEMODE: !Ref LIVEMODE
       Timeout: 300
-      Runtime: python2.7
+      Runtime: python3.9
       Role: !GetAtt ReaperRole.Arn
     DependsOn: ReaperRole
 
@@ -140,7 +141,7 @@ Resources:
         S3Bucket: !Sub "${S3BucketPrefix}-${AWS::Region}"
       Handler: slack_notifier.post
       Timeout: 300
-      Runtime: python2.7
+      Runtime: python3.9
       Role: !GetAtt ReaperRole.Arn
       Environment:
         Variables:
