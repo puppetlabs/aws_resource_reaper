@@ -208,6 +208,6 @@ or `REAPER TERMINATION` should be attached to this Lambda, and a Slack channel w
 should be set as an environment variable. You will need to create a Slack workflow
 in each channel that should receive notifications. The variables to use are as follows:
 
-*account:* The account's alias according to AWS.
-*message:* The REAPER TERMINATION string, i.e. the log entry
-*region:* The AWS region the reaper's running in.
+- *account:* The account's alias according to AWS.
+- *message:* The REAPER TERMINATION string, i.e. the log entry
+- *region:* The AWS region the reaper's running in.
