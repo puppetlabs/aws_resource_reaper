@@ -22,6 +22,11 @@ Parameters:
     Default: ec2-reaper
     Description: Prefix for the S3 Bucket Name in each region.
 
+  OrganizationID:
+    Type: String
+    Description: Provide your Organization ID to limit S3 access to accounts in the Organization.
+    AllowedPattern: ^o-[a-z0-9]+
+
 Resources:
   S3CopierRole:
     Properties:
@@ -60,7 +65,37 @@ Resources:
     Type: "AWS::S3::Bucket"
     Properties:
       BucketName: !Sub "${S3BucketPrefix}-${AWS::Region}"
-      AccessControl: PublicRead
+
+  S3Policy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref S3Bucket
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: ListBucket
+            Effect: Allow
+            Action: s3:ListBucket
+            Resource: !Ref S3Bucket
+            Principal: '*'
+            Condition:
+              StringEquals:
+                aws:PrincipalOrgID: !Ref OrganizationID
+          - Sid: CopyObjects
+            Effect: Allow
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+              - s3:DeleteObject
+            Resource: !Join
+              - ''
+              - - 'arn:aws:s3:::'
+                - !Ref S3Bucket
+                - /*
+            Principal: '*'
+            Condition:
+              StringEquals:
+                aws:PrincipalOrgID: !Ref OrganizationID
 
   S3CopierLambda:
     Properties:
