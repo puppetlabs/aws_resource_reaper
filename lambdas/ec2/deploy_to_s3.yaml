@@ -76,7 +76,7 @@ Resources:
           - Sid: ListBucket
             Effect: Allow
             Action: s3:ListBucket
-            Resource: !Ref S3Bucket
+            Resource: !Sub "arn:aws:s3:::${S3Bucket}"
             Principal: '*'
             Condition:
               StringEquals:
@@ -87,11 +87,7 @@ Resources:
               - s3:GetObject
               - s3:PutObject
               - s3:DeleteObject
-            Resource: !Join
-              - ''
-              - - 'arn:aws:s3:::'
-                - !Ref S3Bucket
-                - /*
+            Resource: !Sub "arn:aws:s3:::${S3Bucket}/*"
             Principal: '*'
             Condition:
               StringEquals:
